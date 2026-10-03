@@ -1,7 +1,7 @@
 import { IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 
 export class CreateReviewDto {
-  @IsUUID()
+  @IsUUID('loose')
   bookingId: string;
 
   @IsInt()

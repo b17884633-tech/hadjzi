@@ -17,12 +17,15 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
+    const password =
+      dto.password?.trim() ||
+      `Hz${Math.random().toString(36).slice(2)}${Date.now()}!`;
     const user = await this.users.createCustomer({
       firstName: dto.firstName,
       lastName: dto.lastName,
       phone: dto.phone,
       email: dto.email,
-      password: dto.password,
+      password,
     });
     const otp = await this.otp.issue(
       user.phone,
@@ -37,6 +40,23 @@ export class AuthService {
 
   async login(dto: LoginDto) {
     const user = await this.users.findByPhone(dto.phone);
+
+    // Passwordless OTP flow (matches mobile auth UI)
+    if (!dto.password) {
+      if (!user) {
+        return { requiresRegister: true, phone: dto.phone };
+      }
+      if (user.status === AccountStatus.SUSPENDED) {
+        throw new UnauthorizedException('Account suspended');
+      }
+      const otp = await this.otp.issue(
+        user.phone,
+        OtpPurpose.LOGIN,
+        dto.channel ?? OtpChannel.SMS,
+      );
+      return { requiresOtp: true, otp };
+    }
+
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
     }
@@ -48,7 +68,11 @@ export class AuthService {
       throw new UnauthorizedException('Account suspended');
     }
     if (!user.phoneVerified) {
-      const otp = await this.otp.issue(user.phone, OtpPurpose.LOGIN);
+      const otp = await this.otp.issue(
+        user.phone,
+        OtpPurpose.LOGIN,
+        dto.channel ?? OtpChannel.SMS,
+      );
       return { requiresOtp: true, otp };
     }
     return this.issueTokens(user);

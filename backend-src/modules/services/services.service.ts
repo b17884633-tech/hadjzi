@@ -29,7 +29,7 @@ export class ServicesService {
       name: dto.name,
       description: dto.description ?? null,
       basePrice: dto.basePrice,
-      depositPercentage: dto.depositPercentage ?? 20,
+      depositPercentage: dto.depositPercentage ?? 30,
       durationMinutes: dto.durationMinutes ?? null,
       attributes: dto.attributes ?? {},
       images: dto.images ?? [],

@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "حجزي | hadjzi",
+    "slug": "hadjzi",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "hadjzi",
+    "userInterfaceStyle": "automatic",
+    "icon": "./assets/logo.png",
+    "splash": {
+      "image": "./assets/logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFFFFF"
+    },
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.platform.booking"
+    },
+    "android": {
+      "package": "com.platform.booking",
+      "supportsRTL": true,
+      "usesCleartextTraffic": true,
+      "adaptiveIcon": {
+        "backgroundColor": "#0D1B3E"
+      }
+    },
+    "extra": {
+      "apiBaseUrl": "http://localhost:3000/api"
+    },
+    "plugins": [
+      "expo-asset",
+      "expo-secure-store",
+      "expo-status-bar",
+      "expo-font"
+    ]
+  }
+}

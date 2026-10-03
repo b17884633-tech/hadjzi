@@ -18,10 +18,11 @@ export class RegisterDto {
   @IsString()
   email?: string;
 
+  @IsOptional()
   @IsString()
   @MinLength(8)
   @MaxLength(72)
-  password: string;
+  password?: string;
 
   @IsOptional()
   @IsEnum(OtpChannel)
@@ -30,10 +31,19 @@ export class RegisterDto {
 
 export class LoginDto {
   @IsString()
+  @Matches(/^\+?[0-9]{9,15}$/)
   phone: string;
 
+  /** Optional — omit for passwordless OTP login */
+  @IsOptional()
   @IsString()
-  password: string;
+  @MinLength(8)
+  @MaxLength(72)
+  password?: string;
+
+  @IsOptional()
+  @IsEnum(OtpChannel)
+  channel?: OtpChannel;
 }
 
 export class SendOtpDto {

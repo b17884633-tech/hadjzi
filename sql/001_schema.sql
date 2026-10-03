@@ -162,7 +162,7 @@ CREATE TABLE services (
     name VARCHAR(150) NOT NULL,
     description TEXT,
     base_price DECIMAL(12, 2) NOT NULL,
-    deposit_percentage DECIMAL(5, 2) DEFAULT 20.00 NOT NULL,
+    deposit_percentage DECIMAL(5, 2) DEFAULT 30.00 NOT NULL,
     duration_minutes INT,
     attributes JSONB DEFAULT '{}'::JSONB NOT NULL,
     images TEXT[] DEFAULT '{}'::TEXT[] NOT NULL,

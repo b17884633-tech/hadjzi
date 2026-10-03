@@ -2,23 +2,7 @@ import { Body, Controller, Get, Patch } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from './entities/user.entity';
-import { IsOptional, IsString, MaxLength } from 'class-validator';
-
-class UpdateProfileDto {
-  @IsOptional()
-  @IsString()
-  @MaxLength(50)
-  firstName?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(50)
-  lastName?: string;
-
-  @IsOptional()
-  @IsString()
-  email?: string;
-}
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Controller('users')
 export class UsersController {

@@ -1,10 +1,11 @@
 import { IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 
 export class CreateBookingDto {
-  @IsUUID()
+  /** 'loose' accepts demo seed IDs that are UUID-shaped but not RFC variant-strict. */
+  @IsUUID('loose')
   serviceId: string;
 
-  @IsUUID()
+  @IsUUID('loose')
   availabilityId: string;
 
   @IsOptional()

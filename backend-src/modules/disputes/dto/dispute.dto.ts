@@ -2,7 +2,7 @@ import { IsEnum, IsOptional, IsString, IsUUID } from 'class-validator';
 import { DisputeStatus } from '../../../common/enums';
 
 export class CreateDisputeDto {
-  @IsUUID()
+  @IsUUID('loose')
   bookingId: string;
 
   @IsString()

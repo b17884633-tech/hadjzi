@@ -19,6 +19,11 @@ import {
 } from '../../common/enums';
 import { canTransition } from './booking.state-machine';
 import { User } from '../users/entities/user.entity';
+import {
+  BOOKING_LOCK_MINUTES,
+  DEFAULT_COMMISSION_PERCENTAGE,
+  DEFAULT_DEPOSIT_PERCENTAGE,
+} from '../../common/constants/booking.constants';
 
 @Injectable()
 export class BookingService {
@@ -31,11 +36,13 @@ export class BookingService {
 
   async create(user: User, dto: CreateBookingDto) {
     const quantity = dto.quantity ?? 1;
-    const lockMinutes = Number(this.config.get('BOOKING_LOCK_MINUTES') ?? 10);
+    const lockMinutes = Number(
+      this.config.get('BOOKING_LOCK_MINUTES') ?? BOOKING_LOCK_MINUTES,
+    );
     const commissionPercentage = Number(
       this.config.get('payment.commissionPercentage') ??
         this.config.get('COMMISSION_PERCENTAGE') ??
-        10,
+        DEFAULT_COMMISSION_PERCENTAGE,
     );
 
     return this.dataSource.transaction(async (manager) => {

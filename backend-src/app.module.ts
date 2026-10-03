@@ -6,6 +6,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import databaseConfig from './config/database.config';
 import jwtConfig from './config/jwt.config';
 import paymentConfig from './config/payment.config';
+import redisConfig from './config/redis.config';
 import { AuthGuard } from './common/guards/auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -23,12 +24,13 @@ import { BannersModule } from './modules/banners/banners.module';
 import { ReviewsModule } from './modules/reviews/reviews.module';
 import { DisputesModule } from './modules/disputes/disputes.module';
 import { JobsModule } from './jobs/jobs.module';
+import { HealthModule } from './modules/health/health.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [databaseConfig, jwtConfig, paymentConfig],
+      load: [databaseConfig, jwtConfig, paymentConfig, redisConfig],
     }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
@@ -48,6 +50,7 @@ import { JobsModule } from './jobs/jobs.module';
     ReviewsModule,
     DisputesModule,
     JobsModule,
+    HealthModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },

@@ -5,21 +5,16 @@ import {
   NestInterceptor,
 } from '@nestjs/common';
 import { Observable, map } from 'rxjs';
-
-export interface ApiResponse<T> {
-  success: true;
-  data: T;
-  timestamp: string;
-}
+import { ApiSuccessResponse } from '../types/api-response.type';
 
 @Injectable()
 export class TransformResponseInterceptor<T>
-  implements NestInterceptor<T, ApiResponse<T>>
+  implements NestInterceptor<T, ApiSuccessResponse<T>>
 {
   intercept(
     _context: ExecutionContext,
     next: CallHandler<T>,
-  ): Observable<ApiResponse<T>> {
+  ): Observable<ApiSuccessResponse<T>> {
     return next.handle().pipe(
       map((data) => ({
         success: true as const,

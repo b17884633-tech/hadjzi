@@ -10,7 +10,13 @@
     "build": "nest build",
     "db:apply": "node scripts/apply-schema.mjs",
     "db:sql": "node scripts/apply-sql.mjs",
-    "db:seed": "node scripts/apply-sql.mjs sql/003_seed.sql"
+    "db:seed": "node scripts/apply-sql.mjs sql/003_seed.sql",
+    "db:seed:categories": "node scripts/apply-sql.mjs sql/005_category_taxonomy.sql",
+    "db:seed:extra": "node scripts/apply-sql.mjs sql/006_extra_test_data.sql",
+    "db:seed:deposit": "node scripts/apply-sql.mjs sql/007_deposit_30.sql",
+    "db:seed:avail": "node scripts/refill-availabilities.js",
+    "db:seed:test": "node scripts/apply-sql.mjs sql/003_seed.sql && node scripts/apply-sql.mjs sql/005_category_taxonomy.sql && node scripts/apply-sql.mjs sql/004_test_data.sql && node scripts/apply-sql.mjs sql/006_extra_test_data.sql",
+    "db:seed:demo": "node scripts/apply-sql.mjs sql/004_test_data.sql && node scripts/apply-sql.mjs sql/006_extra_test_data.sql"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.6",

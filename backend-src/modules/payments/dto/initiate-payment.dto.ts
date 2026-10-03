@@ -1,7 +1,7 @@
 import { IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class InitiatePaymentDto {
-  @IsUUID()
+  @IsUUID('loose')
   bookingId: string;
 
   @IsString()

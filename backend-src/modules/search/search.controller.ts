@@ -1,25 +1,7 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { SearchService } from './search.service';
 import { Public } from '../../common/decorators/public.decorator';
-import { Type } from 'class-transformer';
-import { IsInt, IsOptional } from 'class-validator';
-
-class SearchQueryDto {
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  cityId?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  regionId?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  categoryId?: number;
-}
+import { SearchQueryDto } from './dto/search-query.dto';
 
 @Public()
 @Controller()
