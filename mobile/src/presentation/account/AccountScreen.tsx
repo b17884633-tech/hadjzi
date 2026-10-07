@@ -22,6 +22,7 @@ import { CityPickerSheet } from '../home/components/CityPickerSheet';
 import { CurrencyPickerSheet } from './CurrencyPickerSheet';
 import { FeedbackSheet } from './FeedbackSheet';
 import { LoginGate } from '../common/components/LoginGate';
+import { NotificationBellButton } from '@/core/ui/components/NotificationBellButton';
 
 const FALLBACK_CITIES: Destination[] = [
   { id: 1, name: 'صنعاء' },
@@ -99,9 +100,10 @@ export function AccountScreen() {
     <View style={styles.header}>
       <Text style={styles.headerTitle}>الحساب</Text>
       <View style={styles.headerActions}>
-        <Pressable style={styles.iconBtn}>
-          <Ionicons name="notifications-outline" size={20} color={theme.colors.primary} />
-        </Pressable>
+        <NotificationBellButton
+          onPress={() => navigation.navigate('Notifications')}
+          style={styles.iconBtn}
+        />
         <Pressable
           style={styles.iconBtn}
           onPress={() => Linking.openURL(WHATSAPP_URL)}
@@ -121,10 +123,13 @@ export function AccountScreen() {
   const menuItems: MenuItem[] = [
     {
       key: 'add-facility',
-      label: 'إضافة الخدمة الخاصة بك',
+      label:
+        user.role === 'PROVIDER' || user.role === 'ADMIN'
+          ? 'لوحة مقدّم الخدمة'
+          : 'إضافة الخدمة الخاصة بك',
       icon: 'business-outline',
       highlight: true,
-      onPress: () => navigation.navigate('Auth'),
+      onPress: () => navigation.navigate('ProviderHome'),
     },
     {
       key: 'favorites',
@@ -294,9 +299,8 @@ export function AccountScreen() {
       <FeedbackSheet
         visible={feedbackOpen}
         onClose={() => setFeedbackOpen(false)}
-        onSubmit={async () => {
-          // Placeholder until a support endpoint exists
-          await new Promise((r) => setTimeout(r, 400));
+        onSubmit={async (message) => {
+          await container.disputeApi.create({ reason: message });
         }}
       />
     </SafeAreaView>
@@ -338,7 +342,7 @@ const styles = StyleSheet.create({
   },
   scroll: {
     paddingHorizontal: 14,
-    paddingBottom: 28,
+    paddingBottom: 120,
     gap: 10,
   },
 

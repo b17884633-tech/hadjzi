@@ -26,6 +26,9 @@ export interface Provider {
   rating?: number;
   reviewCount?: number;
   verified?: boolean;
+  cancellationPolicy?: string | null;
+  /** Facility-level details (spaces, amenities, terms, policies). */
+  attributes?: Record<string, unknown>;
   city?: { id: number; name: string } | null;
   region?: { id: number; name: string } | null;
   category?: {
@@ -35,5 +38,7 @@ export interface Provider {
     bookingType?: 'SLOT' | 'UNIT_DAY' | 'EVENT_DAY' | 'QUANTITY';
   } | null;
   bookingType?: 'SLOT' | 'UNIT_DAY' | 'EVENT_DAY' | 'QUANTITY';
+  latitude?: number | null;
+  longitude?: number | null;
   services?: ServiceItem[];
 }

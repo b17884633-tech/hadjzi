@@ -1,5 +1,8 @@
-import { ActivityIndicator, I18nManager, StyleSheet, View } from 'react-native';
+import { useEffect } from 'react';
+import { ActivityIndicator, I18nManager, Platform, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { NavigationBar } from 'expo-navigation-bar';
+import * as SystemUI from 'expo-system-ui';
 import { useFonts } from 'expo-font';
 import {
   Cairo_400Regular,
@@ -18,6 +21,14 @@ import { CAIRO } from './src/core/ui/theme/fonts';
 I18nManager.allowRTL(true);
 I18nManager.forceRTL(true);
 
+const SYSTEM_EDGE = '#FFFFFF';
+
+// Paint root + Android system nav edge white (avoids grey strip under tab bar)
+void SystemUI.setBackgroundColorAsync(SYSTEM_EDGE);
+if (Platform.OS === 'android') {
+  NavigationBar.setStyle('dark');
+}
+
 export default function App() {
   const [fontsLoaded] = useFonts({
     Cairo_400Regular,
@@ -25,6 +36,13 @@ export default function App() {
     Cairo_600SemiBold,
     Cairo_700Bold,
   });
+
+  useEffect(() => {
+    void SystemUI.setBackgroundColorAsync(SYSTEM_EDGE);
+    if (Platform.OS === 'android') {
+      NavigationBar.setStyle('dark');
+    }
+  }, []);
 
   if (!fontsLoaded) {
     return (
@@ -73,6 +91,7 @@ export default function App() {
         >
           <RootNavigator />
           <StatusBar style="dark" />
+          {Platform.OS === 'android' ? <NavigationBar style="dark" /> : null}
         </NavigationContainer>
       </AppProvider>
     </SafeAreaProvider>

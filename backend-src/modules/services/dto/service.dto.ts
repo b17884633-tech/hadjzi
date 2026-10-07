@@ -12,6 +12,9 @@ import {
 
 export class CreateServiceDto {
   @IsString()
+  providerId: string;
+
+  @IsString()
   name: string;
 
   @IsOptional()
@@ -25,6 +28,46 @@ export class CreateServiceDto {
   @IsNumber()
   @Min(0)
   basePrice: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  depositPercentage?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  durationMinutes?: number;
+
+  @IsOptional()
+  @IsObject()
+  attributes?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(12)
+  images?: string[];
+}
+
+export class UpdateServiceDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsInt()
+  categoryId?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  basePrice?: number;
 
   @IsOptional()
   @IsNumber()
@@ -69,4 +112,22 @@ export class CreateAvailabilityDto {
   @IsNumber()
   @Min(0)
   customPrice?: number;
+}
+
+/** Open bookable all-day slots for a date range (hotels/chalets). */
+export class SeedAvailabilityDto {
+  @IsOptional()
+  @IsString()
+  fromDate?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(366)
+  days?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  totalCapacity?: number;
 }

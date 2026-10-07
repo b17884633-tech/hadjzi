@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
+  ScrollView,
   StyleSheet,
   TextInput,
   View,
@@ -47,7 +48,8 @@ export function OtpVerifySheet({
     const id = setInterval(() => {
       setSeconds((s) => (s > 0 ? s - 1 : 0));
     }, 1000);
-    const focus = setTimeout(() => inputRef.current?.focus(), 350);
+    // Focus after the sheet finishes sliding up so the keyboard lift is correct
+    const focus = setTimeout(() => inputRef.current?.focus(), 520);
     return () => {
       clearInterval(id);
       clearTimeout(focus);
@@ -60,81 +62,88 @@ export function OtpVerifySheet({
 
   return (
     <SmoothBottomSheet visible={visible} onClose={onClose} sheetStyle={styles.sheet}>
-          <View style={styles.header}>
-            <Text style={styles.title}>رمز التحقق</Text>
-            <Pressable style={styles.editBtn} onPress={onEdit}>
-              <Ionicons name="pencil" size={14} color={theme.colors.teal} />
-              <Text style={styles.editText}>تعديل</Text>
-            </Pressable>
-          </View>
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+        contentContainerStyle={styles.content}
+      >
+        <View style={styles.header}>
+          <Text style={styles.title}>رمز التحقق</Text>
+          <Pressable style={styles.editBtn} onPress={onEdit}>
+            <Ionicons name="pencil" size={14} color={theme.colors.teal} />
+            <Text style={styles.editText}>تعديل</Text>
+          </Pressable>
+        </View>
 
-          <Text style={styles.hint}>
-            يرجى إدخال رمز التحقق المرسل لـ {phone}
+        <Text style={styles.hint}>
+          يرجى إدخال رمز التحقق المرسل لـ {phone}
+        </Text>
+
+        <View style={styles.banner}>
+          <Ionicons
+            name={channel === 'WHATSAPP' ? 'logo-whatsapp' : 'chatbubble-ellipses'}
+            size={18}
+            color={theme.colors.teal}
+          />
+          <Text style={styles.bannerText}>
+            تم إرسال رمز التحقق عبر {channelLabel}
           </Text>
+        </View>
 
-          <View style={styles.banner}>
-            <Ionicons
-              name={channel === 'WHATSAPP' ? 'logo-whatsapp' : 'chatbubble-ellipses'}
-              size={18}
-              color={theme.colors.teal}
-            />
-            <Text style={styles.bannerText}>
-              تم إرسال رمز التحقق عبر {channelLabel}
-            </Text>
-          </View>
-
-          <Pressable style={styles.codeBox} onPress={() => inputRef.current?.focus()}>
-            <View style={styles.dots}>
-              {Array.from({ length: 6 }, (_, i) => {
-                const digit = code[i];
-                return (
-                  <View key={i} style={styles.dotSlot}>
-                    {digit ? (
-                      <Text style={styles.digit}>{digit}</Text>
-                    ) : (
-                      <View style={styles.dot} />
-                    )}
-                  </View>
-                );
-              })}
-            </View>
-            <TextInput
-              ref={inputRef}
-              value={code}
-              onChangeText={(t) => setCode(t.replace(/\D/g, '').slice(0, 6))}
-              keyboardType="number-pad"
-              maxLength={6}
-              style={styles.hiddenInput}
-              caretHidden
-            />
-          </Pressable>
-
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-
-          {seconds > 0 ? (
-            <Text style={styles.timer}>إعادة إرسال الكود بعد {mm}:{ss}</Text>
-          ) : (
-            <Pressable onPress={onResend}>
-              <Text style={styles.resend}>إعادة إرسال الكود</Text>
-            </Pressable>
-          )}
-
-          <Pressable
-            style={[styles.confirm, (code.length < 6 || loading) && styles.confirmDisabled]}
-            disabled={code.length < 6 || loading}
-            onPress={() => onConfirm(code)}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <>
-                <View style={styles.confirmIcon}>
-                  <Ionicons name="checkmark" size={16} color={theme.colors.teal} />
+        <Pressable style={styles.codeBox} onPress={() => inputRef.current?.focus()}>
+          <View style={styles.dots}>
+            {Array.from({ length: 6 }, (_, i) => {
+              const digit = code[i];
+              return (
+                <View key={i} style={styles.dotSlot}>
+                  {digit ? (
+                    <Text style={styles.digit}>{digit}</Text>
+                  ) : (
+                    <View style={styles.dot} />
+                  )}
                 </View>
-                <Text style={styles.confirmLabel}>تأكيد</Text>
-              </>
-            )}
+              );
+            })}
+          </View>
+          <TextInput
+            ref={inputRef}
+            value={code}
+            onChangeText={(t) => setCode(t.replace(/\D/g, '').slice(0, 6))}
+            keyboardType="number-pad"
+            maxLength={6}
+            style={styles.hiddenInput}
+            caretHidden
+          />
+        </Pressable>
+
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+
+        {seconds > 0 ? (
+          <Text style={styles.timer}>إعادة إرسال الكود بعد {mm}:{ss}</Text>
+        ) : (
+          <Pressable onPress={onResend}>
+            <Text style={styles.resend}>إعادة إرسال الكود</Text>
           </Pressable>
+        )}
+
+        <Pressable
+          style={[styles.confirm, (code.length < 6 || loading) && styles.confirmDisabled]}
+          disabled={code.length < 6 || loading}
+          onPress={() => onConfirm(code)}
+        >
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <View style={styles.confirmIcon}>
+                <Ionicons name="checkmark" size={16} color={theme.colors.teal} />
+              </View>
+              <Text style={styles.confirmLabel}>تأكيد</Text>
+            </>
+          )}
+        </Pressable>
+      </ScrollView>
     </SmoothBottomSheet>
   );
 }
@@ -143,8 +152,11 @@ const styles = StyleSheet.create({
   sheet: {
     paddingHorizontal: 20,
     paddingTop: 8,
-    paddingBottom: 28,
+    paddingBottom: 16,
+  },
+  content: {
     gap: 12,
+    paddingBottom: 12,
   },
   header: {
     flexDirection: 'row',

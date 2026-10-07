@@ -5,9 +5,17 @@ import { BookingService } from './booking.service';
 import { BookingController } from './booking.controller';
 import { ServiceItem } from '../services/entities/service-item.entity';
 import { ServiceAvailability } from '../services/entities/service-availability.entity';
+import { Payment } from '../payments/entities/payment.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Booking, ServiceItem, ServiceAvailability])],
+  imports: [
+    TypeOrmModule.forFeature([
+      Booking,
+      ServiceItem,
+      ServiceAvailability,
+      Payment,
+    ]),
+  ],
   controllers: [BookingController],
   providers: [BookingService],
   exports: [BookingService],

@@ -123,3 +123,77 @@ export function timeRangeLabel(booking: Booking): string | undefined {
 export function insuranceEstimate(total: number): number {
   return Math.round(total * 0.227);
 }
+
+/** Guest name/phone from linked user or desk-booking notes. */
+export function guestDisplayInfo(booking: Booking): {
+  name: string;
+  phone?: string;
+  isDesk: boolean;
+} {
+  const c = booking.customer;
+  if (c) {
+    const name = `${c.firstName ?? ''} ${c.lastName ?? ''}`.trim();
+    return {
+      name: name || c.phone || 'عميل',
+      phone: c.phone,
+      isDesk: false,
+    };
+  }
+  const notes = booking.customerNotes ?? '';
+  const isDesk = notes.includes('[حجز مكتبي');
+  const nameMatch = notes.match(/الاسم:\s*(.+)/);
+  const phoneMatch = notes.match(/الهاتف:\s*(.+)/);
+  return {
+    name: nameMatch?.[1]?.trim() || (isDesk ? 'عميل مكتبي' : 'عميل'),
+    phone: phoneMatch?.[1]?.trim(),
+    isDesk,
+  };
+}
+
+export type BookingNoteLine = {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+  value: string;
+};
+
+/** Split pipe/newline booking notes into readable rows. */
+export function parseBookingNoteLines(
+  notes?: string | null,
+): BookingNoteLine[] {
+  if (!notes?.trim()) return [];
+
+  const rawParts = notes
+    .split(/\s*\|\s*|\n+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  const rows: BookingNoteLine[] = [];
+  for (const part of rawParts) {
+    if (part.startsWith('[حجز مكتبي')) continue;
+    if (/^الاسم:/.test(part) || /^الهاتف:/.test(part)) continue;
+
+    const colon = part.indexOf(':');
+    const label = colon > 0 ? part.slice(0, colon).trim() : 'ملاحظة';
+    const value = colon > 0 ? part.slice(colon + 1).trim() : part;
+    if (!value) continue;
+
+    rows.push({
+      icon: iconForNoteLabel(label),
+      label,
+      value,
+    });
+  }
+  return rows;
+}
+
+function iconForNoteLabel(label: string): keyof typeof Ionicons.glyphMap {
+  if (/حضور|عائش|نوع/.test(label)) return 'people-outline';
+  if (/أشخاص|شخص/.test(label)) return 'person-outline';
+  if (/مغادرة|وصول|دخول/.test(label)) return 'log-out-outline';
+  if (/ليال|ليلة/.test(label)) return 'moon-outline';
+  if (/غرف|غرفة/.test(label)) return 'bed-outline';
+  if (/فترة|مدة|وقت|تسليم/.test(label)) return 'time-outline';
+  if (/انطلاق|وصول|نقط/.test(label)) return 'navigate-outline';
+  if (/دفع|حوالة|جيب|JEEB/i.test(label)) return 'wallet-outline';
+  return 'document-text-outline';
+}

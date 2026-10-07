@@ -57,6 +57,15 @@ export function CountryPickerSheet({
         keyExtractor={(item) => item.code}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
+        initialNumToRender={16}
+        windowSize={10}
+        maxToRenderPerBatch={16}
+        removeClippedSubviews
+        getItemLayout={(_, index) => ({
+          length: 53,
+          offset: 53 * index,
+          index,
+        })}
         renderItem={({ item, index }) => {
           const selected = item.code === selectedCode;
           return (

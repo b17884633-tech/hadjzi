@@ -38,8 +38,14 @@ export type RootStackParamList = {
   BookingCheckout: BookingCheckoutParams;
   BookingSummary: { bookingId: string; draft?: CreateBookingPayload };
   PaymentWebview: { checkoutUrl: string; bookingId: string };
-  BookingVoucher: { bookingId: string };
+  BookingVoucher: { bookingId: string; mode?: 'provider' };
+  Notifications: undefined;
   Favorites: undefined;
+  ProviderHome: undefined;
+  ProviderFacility: { providerId: string };
+  ProviderFacilityForm: { providerId?: string };
+  ProviderServiceForm: { providerId: string; serviceId?: string };
+  ProviderDeskBooking: { providerId: string };
 };
 
 declare global {

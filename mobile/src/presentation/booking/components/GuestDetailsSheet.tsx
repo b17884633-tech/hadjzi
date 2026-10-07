@@ -12,6 +12,8 @@ type Props = {
   attendanceType: string;
   adults: number;
   children: number;
+  /** Total guests allowed for this booking (rooms × capacity per room). */
+  maxGuests?: number;
   onChangeAttendance: (v: string) => void;
   onChangeAdults: (n: number) => void;
   onChangeChildren: (n: number) => void;
@@ -22,21 +24,32 @@ type Props = {
 function Stepper({
   value,
   onChange,
+  min = 0,
+  max,
 }: {
   value: number;
   onChange: (n: number) => void;
+  min?: number;
+  max?: number;
 }) {
+  const atMin = value <= min;
+  const atMax = max != null && value >= max;
+
   return (
     <View style={styles.stepper}>
       <Pressable
-        style={[styles.stepBtn, value <= 0 && styles.stepBtnDisabled]}
-        disabled={value <= 0}
-        onPress={() => onChange(Math.max(0, value - 1))}
+        style={[styles.stepBtn, atMin && styles.stepBtnDisabled]}
+        disabled={atMin}
+        onPress={() => onChange(Math.max(min, value - 1))}
       >
         <Ionicons name="remove" size={16} color="#fff" />
       </Pressable>
       <Text style={styles.stepValue}>{value}</Text>
-      <Pressable style={styles.stepBtn} onPress={() => onChange(value + 1)}>
+      <Pressable
+        style={[styles.stepBtn, atMax && styles.stepBtnDisabled]}
+        disabled={atMax}
+        onPress={() => onChange(max != null ? Math.min(max, value + 1) : value + 1)}
+      >
         <Ionicons name="add" size={16} color="#fff" />
       </Pressable>
     </View>
@@ -48,6 +61,7 @@ export function GuestDetailsSheet({
   attendanceType,
   adults,
   children,
+  maxGuests,
   onChangeAttendance,
   onChangeAdults,
   onChangeChildren,
@@ -55,6 +69,15 @@ export function GuestDetailsSheet({
   onNext,
 }: Props) {
   const [typeOpen, setTypeOpen] = useState(false);
+  const total = adults + children;
+  const remaining =
+    maxGuests != null ? Math.max(0, maxGuests - total) : undefined;
+  const adultsMax =
+    maxGuests != null ? Math.max(1, maxGuests - children) : undefined;
+  const childrenMax =
+    maxGuests != null ? Math.max(0, maxGuests - adults) : undefined;
+  const overLimit = maxGuests != null && total > maxGuests;
+  const canNext = total >= 1 && !overLimit;
 
   return (
     <>
@@ -63,6 +86,16 @@ export function GuestDetailsSheet({
         <Text style={styles.subtitle}>
           قم بتحديد نوع الحضور وعدد الأشخاص الحاضرين للحجز
         </Text>
+
+        {maxGuests != null ? (
+          <View style={styles.capBanner}>
+            <Ionicons name="people-outline" size={16} color={theme.colors.primary} />
+            <Text style={styles.capText}>
+              الحد الأقصى {maxGuests} أشخاص لهذه الغرف
+              {remaining != null ? ` · متبقي ${remaining}` : ''}
+            </Text>
+          </View>
+        ) : null}
 
         <Text style={styles.fieldLabel}>نوع الحجز</Text>
         <Pressable style={styles.select} onPress={() => setTypeOpen(true)}>
@@ -74,7 +107,12 @@ export function GuestDetailsSheet({
         </Pressable>
 
         <View style={styles.countRow}>
-          <Stepper value={adults} onChange={onChangeAdults} />
+          <Stepper
+            value={adults}
+            min={1}
+            max={adultsMax}
+            onChange={onChangeAdults}
+          />
           <View style={styles.countLabel}>
             <Text style={styles.countTitle}>عدد الكبار</Text>
             <Ionicons name="people-outline" size={18} color={theme.colors.accent} />
@@ -82,19 +120,34 @@ export function GuestDetailsSheet({
         </View>
 
         <View style={styles.countRow}>
-          <Stepper value={children} onChange={onChangeChildren} />
+          <Stepper
+            value={children}
+            min={0}
+            max={childrenMax}
+            onChange={onChangeChildren}
+          />
           <View style={styles.countLabel}>
             <Text style={styles.countTitle}>عدد الأطفال</Text>
             <Ionicons name="people-outline" size={18} color={theme.colors.accent} />
           </View>
         </View>
 
-        <Pressable onPress={onNext} style={styles.nextWrap}>
+        {overLimit ? (
+          <Text style={styles.error}>
+            عدد الأشخاص يتجاوز سعة الغرف ({maxGuests})
+          </Text>
+        ) : null}
+
+        <Pressable
+          onPress={onNext}
+          style={styles.nextWrap}
+          disabled={!canNext}
+        >
           <LinearGradient
             colors={[theme.colors.primaryLight, theme.colors.primary]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
-            style={styles.nextBtn}
+            style={[styles.nextBtn, !canNext && { opacity: 0.45 }]}
           >
             <Text style={styles.nextText}>التالي</Text>
           </LinearGradient>
@@ -127,8 +180,27 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: theme.colors.textSecondary,
     textAlign: 'center',
-    marginBottom: 18,
+    marginBottom: 14,
     lineHeight: 20,
+  },
+  capBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#EEF3FA',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 14,
+  },
+  capText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '700',
+    color: theme.colors.primary,
+    textAlign: 'right',
+    writingDirection: 'rtl',
   },
   fieldLabel: {
     fontSize: 13,
@@ -183,6 +255,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
     color: theme.colors.primary,
+  },
+  error: {
+    fontSize: 12,
+    color: theme.colors.error,
+    textAlign: 'center',
+    fontWeight: '600',
+    marginBottom: 8,
   },
   nextWrap: { marginTop: 10 },
   nextBtn: {

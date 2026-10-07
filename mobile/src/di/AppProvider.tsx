@@ -1,4 +1,12 @@
-import { createContext, ReactNode, useCallback, useContext, useEffect, useState } from 'react';
+import {
+  createContext,
+  ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import { User } from '../domain/model/User';
 import { AppContainer, container } from './container';
 import { hasCompletedWelcome as readWelcomeFlag } from '../data/local/onboardingStorage';
@@ -61,25 +69,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [currency],
   );
 
-  return (
-    <AppContext.Provider
-      value={{
-        container,
-        user,
-        isBootstrapping,
-        hasCompletedWelcome,
-        currency,
-        currencyLabel: getCurrency(currency).label,
-        setUser,
-        setCurrency,
-        formatPrice,
-        refreshSession,
-        markWelcomeComplete,
-      }}
-    >
-      {children}
-    </AppContext.Provider>
+  const value = useMemo<AppContextValue>(
+    () => ({
+      container,
+      user,
+      isBootstrapping,
+      hasCompletedWelcome,
+      currency,
+      currencyLabel: getCurrency(currency).label,
+      setUser,
+      setCurrency,
+      formatPrice,
+      refreshSession,
+      markWelcomeComplete,
+    }),
+    [
+      user,
+      isBootstrapping,
+      hasCompletedWelcome,
+      currency,
+      setCurrency,
+      formatPrice,
+    ],
   );
+
+  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
 
 export function useApp(): AppContextValue {

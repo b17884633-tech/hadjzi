@@ -24,6 +24,8 @@ export type BookingFlowKind =
   | 'QUANTITY_DELIVERY' // wedding supplies
   | 'TRANSPORT'; // transport trips
 
+export type PackagePeriod = 'MORNING' | 'EVENING' | 'PER_NIGHT';
+
 export type BookingDraftParams = {
   providerId: string;
   serviceId: string;
@@ -36,6 +38,12 @@ export type BookingDraftParams = {
   capacityLabel?: string;
   timeLabel?: string;
   image?: string;
+  /** Max guests allowed per room/unit (from provider). Total = guestsPerRoom × rooms. */
+  guestsPerRoom?: number;
+  /** Chalet package period — drives single-day vs check-in/out range. */
+  packagePeriod?: PackagePeriod;
+  packageFromTime?: string;
+  packageToTime?: string;
 };
 
 export type BookingCheckoutParams = BookingDraftParams & {
@@ -246,7 +254,7 @@ export function resolveBookingFlow(
     };
   }
 
-  if (/فندق|غرف/i.test(cat)) {
+  if (/فنادق|فندق|غرف|hotel/i.test(cat)) {
     return {
       kind: 'STAY_RANGE',
       bookingType: 'UNIT_DAY',
@@ -351,7 +359,8 @@ export function bookingTitle(categoryName?: string): string {
 export function formatArabicDate(isoDate: string): string {
   const d = new Date(`${isoDate}T12:00:00`);
   if (Number.isNaN(d.getTime())) return isoDate;
-  return d.toLocaleDateString('ar-EG', {
+  // Arabic month names with Western digits (1,2,3) — not ١٢٣
+  return d.toLocaleDateString('ar-EG-u-nu-latn', {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
@@ -377,6 +386,7 @@ export function nightsBetween(checkIn: string, checkOut: string): number {
   return Math.round((b - a) / (24 * 60 * 60 * 1000));
 }
 
+/** Stay nights for pricing: [from, toExclusive). */
 export function eachIsoDate(from: string, toExclusive: string): string[] {
   const out: string[] = [];
   let cur = from;
@@ -385,6 +395,42 @@ export function eachIsoDate(from: string, toExclusive: string): string[] {
     cur = addDaysIso(cur, 1);
   }
   return out;
+}
+
+/** Capacity lock span: check-in through check-out inclusive. */
+export function eachBlockedIsoDate(from: string, toInclusive: string): string[] {
+  const out: string[] = [];
+  let cur = from;
+  while (cur <= toInclusive) {
+    out.push(cur);
+    cur = addDaysIso(cur, 1);
+  }
+  return out;
+}
+
+/** Provider-defined max guests for one room/unit. */
+export function guestsPerUnit(
+  attributes?: Record<string, unknown> | null,
+): number | undefined {
+  const raw = attributes?.maxGuests ?? attributes?.capacity ?? attributes?.guests;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return Math.floor(n);
+}
+
+export function packagePeriodLabel(period?: PackagePeriod | null): string | undefined {
+  if (period === 'MORNING') return 'فترة صباحية';
+  if (period === 'EVENING') return 'فترة مسائية';
+  if (period === 'PER_NIGHT') return 'حجز بالليلة';
+  return undefined;
+}
+
+export function readPackagePeriod(
+  attributes?: Record<string, unknown> | null,
+): PackagePeriod | undefined {
+  const p = attributes?.period;
+  if (p === 'MORNING' || p === 'EVENING' || p === 'PER_NIGHT') return p;
+  return undefined;
 }
 
 export function periodLabelForSlot(startTime?: string | null, endTime?: string | null): string {

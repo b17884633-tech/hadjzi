@@ -1,6 +1,10 @@
 import { BookingApi } from '../remote/bookingApi';
 import { BookingRepository } from '../../domain/repository/BookingRepository';
-import { Booking, CreateBookingPayload } from '../../domain/model/Booking';
+import {
+  Booking,
+  CreateBookingPayload,
+  CreateDeskBookingPayload,
+} from '../../domain/model/Booking';
 
 function toNum(v: unknown): number {
   const n = typeof v === 'number' ? v : Number(v);
@@ -10,6 +14,7 @@ function toNum(v: unknown): number {
 function mapBooking(raw: Record<string, unknown>): Booking {
   const provider = raw.provider as Record<string, unknown> | null | undefined;
   const service = raw.service as Record<string, unknown> | null | undefined;
+  const customer = raw.customer as Record<string, unknown> | null | undefined;
 
   return {
     id: String(raw.id),
@@ -46,6 +51,16 @@ function mapBooking(raw: Record<string, unknown>): Booking {
           basePrice: toNum(service.basePrice),
         }
       : null,
+    customer: customer
+      ? {
+          id: String(customer.id),
+          firstName: customer.firstName
+            ? String(customer.firstName)
+            : undefined,
+          lastName: customer.lastName ? String(customer.lastName) : undefined,
+          phone: customer.phone ? String(customer.phone) : undefined,
+        }
+      : null,
   };
 }
 
@@ -58,15 +73,29 @@ export class BookingRepositoryImpl implements BookingRepository {
       availabilityId: payload.availabilityId,
       quantity: payload.quantity ?? 1,
       customerNotes: payload.customerNotes,
+      paymentSubmitted: payload.paymentSubmitted,
+      ...(payload.paymentMethod ? { paymentMethod: payload.paymentMethod } : {}),
+      ...(payload.transferReference
+        ? { transferReference: payload.transferReference }
+        : {}),
+      ...(payload.payFull != null ? { payFull: payload.payFull } : {}),
+      ...(payload.checkOutDate ? { checkOutDate: payload.checkOutDate } : {}),
     };
     const { data } = await this.api.create(body);
+    return mapBooking(data.data as unknown as Record<string, unknown>);
+  }
+
+  async createDesk(payload: CreateDeskBookingPayload): Promise<Booking> {
+    const { data } = await this.api.createDesk(payload);
     return mapBooking(data.data as unknown as Record<string, unknown>);
   }
 
   async listMine(): Promise<Booking[]> {
     const { data } = await this.api.listMine();
     const list = Array.isArray(data.data) ? data.data : [];
-    return list.map((item) => mapBooking(item as unknown as Record<string, unknown>));
+    return list.map((item) =>
+      mapBooking(item as unknown as Record<string, unknown>),
+    );
   }
 
   async getById(id: string): Promise<Booking> {
@@ -76,6 +105,16 @@ export class BookingRepositoryImpl implements BookingRepository {
 
   async cancel(id: string): Promise<Booking> {
     const { data } = await this.api.cancel(id);
+    return mapBooking(data.data as unknown as Record<string, unknown>);
+  }
+
+  async confirmPayment(id: string): Promise<Booking> {
+    const { data } = await this.api.confirmPayment(id);
+    return mapBooking(data.data as unknown as Record<string, unknown>);
+  }
+
+  async complete(id: string): Promise<Booking> {
+    const { data } = await this.api.complete(id);
     return mapBooking(data.data as unknown as Record<string, unknown>);
   }
 }

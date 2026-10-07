@@ -39,7 +39,7 @@ function formatWeekdayBookingDate(raw?: string | null): string {
   const iso = String(raw).slice(0, 10);
   const date = new Date(`${iso}T12:00:00`);
   if (Number.isNaN(date.getTime())) return formatSlashDate(iso);
-  const weekday = date.toLocaleDateString('ar-EG', { weekday: 'long' });
+  const weekday = date.toLocaleDateString('ar-EG-u-nu-latn', { weekday: 'long' });
   return `يوم ${weekday} الموافق ${formatSlashDate(iso)}`;
 }
 

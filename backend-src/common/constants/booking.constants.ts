@@ -1,4 +1,5 @@
-/** Default slot lock duration while awaiting deposit payment (minutes). */
+/** Soft hold while the customer is still in the booking/checkout flow (minutes).
+ * Cleared once payment proof is submitted — those stay PENDING_PAYMENT until confirmed. */
 export const BOOKING_LOCK_MINUTES = 15;
 
 /** Default deposit percentage when service has no override. */

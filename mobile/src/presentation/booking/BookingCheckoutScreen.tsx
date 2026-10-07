@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Image,
   Pressable,
-  ScrollView,
   StyleSheet,
   TextInput,
   View,
@@ -15,6 +14,8 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BackButton } from '../../core/ui/components/BackButton';
+import { FormKeyboardView } from '../../core/ui/components/FormKeyboardView';
+import { KeyboardAwareScrollView } from '../../core/ui/components/KeyboardAwareScrollView';
 import { theme } from '../../core/ui/theme';
 import { useApp } from '../../di/AppProvider';
 import { RootStackParamList } from '../navigation/types';
@@ -23,6 +24,7 @@ import { CurrencyCode } from '../../core/common/currency';
 import { formatArabicDate } from './bookingFlow';
 import { PaymentTransferSheet } from './components/PaymentTransferSheet';
 import { CurrencyPickerSheet } from '../account/CurrencyPickerSheet';
+import { notifyBookingCreated } from '../../data/local/notificationStorage';
 
 type Route = RouteProp<RootStackParamList, 'BookingCheckout'>;
 
@@ -53,12 +55,16 @@ export function BookingCheckoutScreen() {
     return `${totalPeople} أشخاص${children ? ` (${children} أطفال)` : ''}`;
   }, [params.adults, params.children]);
 
-  const createBooking = async (transferRef: string) => {
+  const createBooking = async (
+    transferRef: string,
+    payMode: 'FULL' | 'DEPOSIT',
+  ) => {
     return container.lockBookingSlotUseCase.execute({
       serviceId: params.serviceId,
       availabilityId: params.availabilityId,
       quantity: params.quantity,
       bookingDate: params.bookingDate,
+      checkOutDate: params.checkOutDate,
       startTime: params.startTime ?? undefined,
       endTime: params.endTime ?? undefined,
       customerNotes: [
@@ -75,10 +81,15 @@ export function BookingCheckoutScreen() {
         params.pickupPoint ? `الانطلاق: ${params.pickupPoint}` : null,
         params.dropoffPoint ? `الوصول: ${params.dropoffPoint}` : null,
         `طريقة الدفع: ${payMethod}`,
+        `وضع الدفع: ${payMode}`,
         `رقم الحوالة: ${transferRef}`,
       ]
         .filter(Boolean)
         .join(' | '),
+      paymentSubmitted: true,
+      paymentMethod: payMethod,
+      transferReference: transferRef,
+      payFull: payMode === 'FULL',
     });
   };
 
@@ -87,12 +98,16 @@ export function BookingCheckoutScreen() {
     setTransferOpen(true);
   };
 
-  const onConfirmTransfer = async (transferRef: string) => {
+  const onConfirmTransfer = async (
+    transferRef: string,
+    payMode: 'FULL' | 'DEPOSIT',
+  ) => {
     setLoading(true);
     setError(null);
     try {
-      // Creates booking as PENDING_PAYMENT — shows under حجوزاتي as pending
-      await createBooking(transferRef);
+      // Creates booking + INITIATED payment for admin Wallet confirmation
+      const booking = await createBooking(transferRef, payMode);
+      await notifyBookingCreated(booking).catch(() => undefined);
       setTransferOpen(false);
       navigation.reset({
         index: 0,
@@ -124,15 +139,17 @@ export function BookingCheckoutScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      <FormKeyboardView>
       <View style={styles.header}>
         <BackButton onPress={() => navigation.goBack()} />
         <Text style={styles.headerTitle}>دفع المبلغ كامل</Text>
         <View style={styles.headerSpacer} />
       </View>
 
-      <ScrollView
+      <KeyboardAwareScrollView
         contentContainerStyle={[styles.scroll, { paddingBottom: 110 + insets.bottom }]}
-        showsVerticalScrollIndicator={false}
+        avoidKeyboard={false}
+        bottomOffset={120}
       >
         <Text style={styles.heroTitle}>قم بدفع لتأكيد الحجز</Text>
         <Text style={styles.heroSub}>قم بدفع المبلغ كاملاً لتأكيد الحجز</Text>
@@ -159,6 +176,12 @@ export function BookingCheckoutScreen() {
         <View style={styles.card}>
           <Text style={styles.priceAccent}>{formatPrice(total)}</Text>
           <Text style={styles.muted}>{params.serviceName}</Text>
+          {params.nights && params.nights > 1 ? (
+            <Text style={styles.muted}>
+              {params.nights} ليلة ×{' '}
+              {formatPrice(Math.round(total / params.nights))}
+            </Text>
+          ) : null}
           <View style={styles.divider} />
           <Detail
             icon="calendar-outline"
@@ -275,7 +298,7 @@ export function BookingCheckoutScreen() {
         </View>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
-      </ScrollView>
+      </KeyboardAwareScrollView>
 
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         <Pressable disabled={loading} onPress={onContinue}>
@@ -293,6 +316,7 @@ export function BookingCheckoutScreen() {
           </LinearGradient>
         </Pressable>
       </View>
+      </FormKeyboardView>
 
       <CurrencyPickerSheet
         visible={currencyOpen}

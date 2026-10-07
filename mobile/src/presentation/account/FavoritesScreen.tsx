@@ -1,6 +1,5 @@
 import { useCallback, useState } from 'react';
 import {
-  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -8,6 +7,7 @@ import {
   View,
 } from 'react-native';
 import { AppText as Text } from '@/core/ui/components/AppText';
+import { OfferCardSkeletonList } from '@/core/ui/components/Skeleton';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -19,19 +19,25 @@ import {
   removeFavorite,
 } from '../../data/local/favoritesStorage';
 import { BackButton } from '../../core/ui/components/BackButton';
+import { useApp } from '../../di/AppProvider';
 import { FeaturedOfferCard } from '../home/components/FeaturedOfferCard';
 import { RootStackParamList } from '../navigation/types';
 
 export function FavoritesScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const { user } = useApp();
   const [items, setItems] = useState<FavoriteProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
-    const list = await getFavorites();
+    if (!user?.id) {
+      setItems([]);
+      return;
+    }
+    const list = await getFavorites(user.id);
     setItems(list);
-  }, []);
+  }, [user?.id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -63,9 +69,9 @@ export function FavoritesScreen() {
       </View>
 
       {loading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator color={theme.colors.primary} />
-        </View>
+        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+          <OfferCardSkeletonList count={2} />
+        </ScrollView>
       ) : (
         <ScrollView
           contentContainerStyle={styles.scroll}
@@ -74,7 +80,21 @@ export function FavoritesScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
         >
-          {items.length === 0 ? (
+          {!user?.id ? (
+            <View style={styles.emptyBox}>
+              <Ionicons name="log-in-outline" size={40} color={theme.colors.accent} />
+              <Text style={styles.emptyTitle}>سجّل الدخول لعرض المفضلة</Text>
+              <Text style={styles.emptyBody}>
+                المفضلة مرتبطة بحسابك — سجّل الدخول لحفظ المنشآت ومتابعتها
+              </Text>
+              <Pressable
+                style={styles.loginBtn}
+                onPress={() => navigation.navigate('Auth')}
+              >
+                <Text style={styles.loginBtnText}>تسجيل الدخول</Text>
+              </Pressable>
+            </View>
+          ) : items.length === 0 ? (
             <View style={styles.emptyBox}>
               <Ionicons name="heart-outline" size={40} color={theme.colors.accent} />
               <Text style={styles.emptyTitle}>لا توجد مفضلات بعد</Text>
@@ -106,7 +126,7 @@ export function FavoritesScreen() {
                 <Pressable
                   style={styles.removeBtn}
                   onPress={async () => {
-                    await removeFavorite(item.id);
+                    await removeFavorite(item.id, user.id);
                     await load();
                   }}
                   accessibilityLabel="إزالة من المفضلة"
@@ -141,11 +161,6 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
   },
   headerSpacer: { width: 40 },
-  centered: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   scroll: {
     paddingHorizontal: 14,
     paddingBottom: 28,
@@ -168,6 +183,18 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     textAlign: 'center',
     lineHeight: 20,
+  },
+  loginBtn: {
+    marginTop: 12,
+    backgroundColor: theme.colors.primary,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    borderRadius: 14,
+  },
+  loginBtnText: {
+    color: '#fff',
+    fontWeight: '800',
+    fontSize: 14,
   },
   cardWrap: {
     position: 'relative',

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Dimensions,
   FlatList,
+  I18nManager,
   Image,
   Linking,
   NativeScrollEvent,
@@ -13,7 +13,12 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
+import MapView, { Marker } from 'react-native-maps';
+import { LinearGradient } from 'expo-linear-gradient';
 import { AppText as Text } from '@/core/ui/components/AppText';
+import { BackButton } from '../../core/ui/components/BackButton';
+import { ImageGalleryModal } from '@/core/ui/components/ImageGalleryModal';
+import { ProviderProfileSkeleton } from '@/core/ui/components/Skeleton';
 import { Ionicons } from '@expo/vector-icons';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -26,16 +31,28 @@ import {
   toggleFavorite,
 } from '../../data/local/favoritesStorage';
 import { RootStackParamList } from '../navigation/types';
-import { BackButton } from '../../core/ui/components/BackButton';
 import { DEPOSIT_PERCENTAGE } from '../../core/common/bookingConstants';
-import { resolveBookingFlow } from '../booking/bookingFlow';
+import {
+  convertFromNewYer,
+  getCurrency,
+} from '../../core/common/currency';
+import { formatNumber } from '../../core/common/format';
+import {
+  guestsPerUnit,
+  packagePeriodLabel,
+  readPackagePeriod,
+  resolveBookingFlow,
+} from '../booking/bookingFlow';
 import { visualForCategory } from '../home/categoryIcons';
+import { centerForCityName, coordsForProvider } from '../search/mapGeo';
 import { DETAIL, buildDetailModel, PricePackage } from './detail/detailModel';
+import { HotelRoomsSheet } from './HotelRoomsSheet';
 
 type Route = RouteProp<RootStackParamList, 'ProviderProfile'>;
 
 const { width: SCREEN_W } = Dimensions.get('window');
-const HERO_H = SCREEN_W * 0.92;
+const HERO_H = SCREEN_W * 0.88;
+const RTL_MAP_FIX = I18nManager.isRTL ? ([{ scaleX: -1 }] as const) : [];
 
 function collectImages(provider: Provider): string[] {
   const fromProvider = provider.images?.filter(Boolean) ?? [];
@@ -46,9 +63,42 @@ function collectImages(provider: Provider): string[] {
   return all.length ? Array.from(new Set(all)) : [];
 }
 
+/** Stars: filled from the right (RTL start). Empty stars sit on the left. */
+function StarRow({ rating }: { rating: number }) {
+  const filled = Math.round(Math.min(5, Math.max(0, rating)));
+  return (
+    <View style={styles.starRow}>
+      {Array.from({ length: 5 }, (_, i) => (
+        <Ionicons
+          key={i}
+          name="star"
+          size={22}
+          color={i < filled ? DETAIL.gold : DETAIL.starEmpty}
+        />
+      ))}
+    </View>
+  );
+}
+
+/** Icon on the far right (RTL start), label beside it. */
+function IconLine({
+  icon,
+  label,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  label: string;
+}) {
+  return (
+    <View style={styles.iconLine}>
+      <Ionicons name={icon} size={20} color={DETAIL.muted} />
+      <Text style={styles.iconLineText}>{label}</Text>
+    </View>
+  );
+}
+
 export function ProviderProfileScreen() {
   const { providerId } = useRoute<Route>().params;
-  const { container, formatPrice, user } = useApp();
+  const { container, formatPrice, user, currency } = useApp();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
@@ -61,47 +111,70 @@ export function ProviderProfileScreen() {
   const [fav, setFav] = useState(false);
   const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
   const [packagesRevealed, setPackagesRevealed] = useState(false);
+  const [amenitiesExpanded, setAmenitiesExpanded] = useState(false);
+  const [roomsOpen, setRoomsOpen] = useState(false);
+  const [heroGalleryOpen, setHeroGalleryOpen] = useState(false);
 
   useEffect(() => {
     setLoading(true);
     setSelectedPackageId(null);
     setPackagesRevealed(false);
+    setAmenitiesExpanded(false);
+    setRoomsOpen(false);
     container.providerApi
       .getProfile(providerId)
-      .then((res) => {
+      .then(async (res) => {
         const p = res.data.data;
+        try {
+          const summary = await container.reviewApi.summary(providerId);
+          p.rating = summary.count > 0 ? summary.average : undefined;
+          p.reviewCount = summary.count;
+        } catch {
+          p.rating = undefined;
+          p.reviewCount = 0;
+        }
         setProvider(p);
-        const firstId = p.services?.[0]?.id ?? null;
-        setSelectedPackageId(firstId);
+        setSelectedPackageId(p.services?.[0]?.id ?? null);
       })
       .catch(() => undefined)
       .finally(() => setLoading(false));
   }, [container, providerId]);
 
   useEffect(() => {
-    isFavorite(providerId)
+    if (!user?.id) {
+      setFav(false);
+      return;
+    }
+    isFavorite(providerId, user.id)
       .then(setFav)
       .catch(() => setFav(false));
-  }, [providerId]);
+  }, [providerId, user?.id]);
 
   const onToggleFavorite = useCallback(async () => {
     if (!provider) return;
+    if (!user?.id) {
+      navigation.navigate('Auth');
+      return;
+    }
     const service = cheapestService(provider);
-    const next = await toggleFavorite({
-      id: provider.id,
-      businessName: provider.businessName,
-      images: collectImages(provider),
-      image: provider.images?.[0] ?? provider.logoUrl,
-      cityName: provider.cityName ?? provider.city?.name,
-      regionName: provider.regionName ?? provider.region?.name,
-      addressDetails: provider.addressDetails,
-      categoryName: provider.categoryName ?? provider.category?.name,
-      rating: provider.rating,
-      price: service?.priceFrom ?? service?.basePrice,
-      verified: provider.verified !== false,
-    });
+    const next = await toggleFavorite(
+      {
+        id: provider.id,
+        businessName: provider.businessName,
+        images: collectImages(provider),
+        image: provider.images?.[0] ?? provider.logoUrl,
+        cityName: provider.cityName ?? provider.city?.name,
+        regionName: provider.regionName ?? provider.region?.name,
+        addressDetails: provider.addressDetails,
+        categoryName: provider.categoryName ?? provider.category?.name,
+        rating: provider.rating,
+        price: service?.priceFrom ?? service?.basePrice,
+        verified: provider.verified !== false,
+      },
+      user.id,
+    );
     setFav(next);
-  }, [provider]);
+  }, [navigation, provider, user?.id]);
 
   const images = useMemo(() => (provider ? collectImages(provider) : []), [provider]);
   const selectedService = useMemo(() => {
@@ -123,29 +196,38 @@ export function ProviderProfileScreen() {
     );
   }, [detail, selectedPackageId]);
 
+  const mapCoords = useMemo(() => {
+    if (!provider) return centerForCityName('صنعاء');
+    const city = provider.cityName ?? provider.city?.name;
+    return coordsForProvider(provider, centerForCityName(city));
+  }, [provider]);
+
   const onHeroScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const x = e.nativeEvent.contentOffset.x;
-    setImageIndex(Math.round(x / SCREEN_W));
+    setImageIndex(Math.round(e.nativeEvent.contentOffset.x / SCREEN_W));
   };
 
   const share = async () => {
     if (!provider) return;
     try {
-      await Share.share({
-        message: `${provider.businessName} — عبر تطبيق حجزي`,
-      });
+      await Share.share({ message: `${provider.businessName} — عبر تطبيق حجزي` });
     } catch {
       /* cancelled */
     }
   };
 
   const openMaps = () => {
-    const q = encodeURIComponent(
-      [provider?.cityName ?? provider?.city?.name, provider?.regionName ?? provider?.region?.name]
-        .filter(Boolean)
-        .join('، ') || provider?.businessName || 'صنعاء',
+    Linking.openURL(
+      `https://www.google.com/maps/search/?api=1&query=${mapCoords.latitude},${mapCoords.longitude}`,
     );
-    Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${q}`);
+  };
+
+  const openTour = () => {
+    const url = detail?.tourUrl?.trim();
+    if (url) {
+      Linking.openURL(url).catch(() => openMaps());
+      return;
+    }
+    openMaps();
   };
 
   const scrollToPackages = () => {
@@ -167,6 +249,14 @@ export function ProviderProfileScreen() {
       provider.bookingType ??
       provider.category?.bookingType ??
       resolveBookingFlow(categoryName).bookingType;
+    const attrs = (service.attributes ?? {}) as Record<string, unknown>;
+    const packagePeriod = pkg?.period ?? readPackagePeriod(attrs);
+    const fromTime =
+      pkg?.fromTime ??
+      (typeof attrs.fromTime === 'string' ? String(attrs.fromTime).slice(0, 5) : undefined);
+    const toTime =
+      pkg?.toTime ??
+      (typeof attrs.toTime === 'string' ? String(attrs.toTime).slice(0, 5) : undefined);
     navigation.navigate('BookingDate', {
       providerId: provider.id,
       serviceId: service.id,
@@ -177,7 +267,12 @@ export function ProviderProfileScreen() {
       price: pkg?.price ?? service.priceFrom ?? service.basePrice ?? 0,
       depositPercentage: DEPOSIT_PERCENTAGE,
       capacityLabel: pkg?.capacityLabel,
-      timeLabel: pkg?.timeLabel,
+      timeLabel: pkg?.timeLabel ?? packagePeriodLabel(packagePeriod),
+      guestsPerRoom:
+        guestsPerUnit(service.attributes) ?? guestsPerUnit(provider.attributes),
+      packagePeriod,
+      packageFromTime: fromTime,
+      packageToTime: toTime,
       image:
         service.images?.[0] ??
         service.imageUrl ??
@@ -188,6 +283,12 @@ export function ProviderProfileScreen() {
 
   const onStickyCta = () => {
     if (!provider || !detail) return;
+
+    // Hotels: open rooms sheet (images + prices) — no packages section
+    if (detail.isHotel) {
+      setRoomsOpen(true);
+      return;
+    }
 
     if (detail.showPackages && detail.packages.length > 0) {
       if (!packagesRevealed) {
@@ -201,37 +302,53 @@ export function ProviderProfileScreen() {
       if (service) startBooking(service, pkg ?? undefined);
       return;
     }
-
     const service = selectedService ?? cheapestService(provider);
     if (service) startBooking(service);
   };
 
   if (loading || !provider || !detail) {
     return (
-      <View style={[styles.boot, { paddingTop: insets.top }]}>
-        <ActivityIndicator size="large" color={DETAIL.teal} />
+      <View style={styles.root}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 40 + insets.bottom }}
+        >
+          <ProviderProfileSkeleton heroHeight={HERO_H} bottomPad={insets.bottom} />
+        </ScrollView>
+        <View style={[styles.stickyTop, { top: insets.top + 8 }]} pointerEvents="box-none">
+          <BackButton elevated color={DETAIL.navy} onPress={() => navigation.goBack()} />
+        </View>
       </View>
     );
   }
 
-  const location = [provider.cityName ?? provider.city?.name, provider.regionName ?? provider.region?.name]
-    .filter(Boolean)
-    .join('، ');
-  const rating = provider.rating ?? 4.0;
+  const addressLine =
+    provider.addressDetails?.trim() ||
+    [provider.cityName ?? provider.city?.name, provider.regionName ?? provider.region?.name]
+      .filter(Boolean)
+      .join('، ');
+  const rating =
+    provider.reviewCount && provider.reviewCount > 0 && provider.rating != null
+      ? provider.rating
+      : 0;
+  const hasReviews = (provider.reviewCount ?? 0) > 0;
+  const ratingLabel = hasReviews ? rating.toFixed(1) : 'جديد';
   const catVisual = visualForCategory(detail.categoryLabel);
   const aboutPreview =
-    detail.aboutText.length > 120 && !aboutExpanded
-      ? `${detail.aboutText.slice(0, 120)}...`
+    detail.aboutText.length > 140 && !aboutExpanded
+      ? `${detail.aboutText.slice(0, 140)}...`
       : detail.aboutText;
+  const visibleAmenities = amenitiesExpanded
+    ? detail.amenities
+    : detail.amenities.slice(0, 4);
 
   return (
     <View style={styles.root}>
       <ScrollView
         ref={scrollRef}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 100 + insets.bottom }}
+        contentContainerStyle={{ paddingBottom: 110 + insets.bottom }}
       >
-        {/* Hero gallery */}
         <View style={[styles.heroWrap, { height: HERO_H }]}>
           {images.length ? (
             <FlatList
@@ -242,8 +359,15 @@ export function ProviderProfileScreen() {
               keyExtractor={(uri, i) => `${uri}-${i}`}
               onScroll={onHeroScroll}
               scrollEventThrottle={16}
-              renderItem={({ item }) => (
-                <Image source={{ uri: item }} style={{ width: SCREEN_W, height: HERO_H }} />
+              renderItem={({ item, index }) => (
+                <Pressable
+                  onPress={() => {
+                    setImageIndex(index);
+                    setHeroGalleryOpen(true);
+                  }}
+                >
+                  <Image source={{ uri: item }} style={{ width: SCREEN_W, height: HERO_H }} />
+                </Pressable>
               )}
             />
           ) : (
@@ -251,46 +375,53 @@ export function ProviderProfileScreen() {
               <Ionicons name="image-outline" size={48} color="#fff" />
             </View>
           )}
-
           {images.length > 0 ? (
-            <View style={styles.counter}>
+            <Pressable
+              style={styles.counter}
+              onPress={() => setHeroGalleryOpen(true)}
+            >
               <Text style={styles.counterText}>
                 {imageIndex + 1} / {images.length}
               </Text>
-            </View>
+            </Pressable>
           ) : null}
         </View>
 
-        {/* Sheet */}
         <View
           style={styles.sheet}
           onLayout={(e) => {
             sheetY.current = e.nativeEvent.layout.y;
           }}
         >
+          {/* RTL: first = right → category right, rating left */}
           <View style={styles.metaRow}>
-            <View style={styles.ratingRow}>
-              <Ionicons name="star" size={16} color={DETAIL.star} />
-              <Text style={styles.ratingText}>{rating.toFixed(1)}</Text>
-            </View>
             <View style={styles.catRow}>
-              <Ionicons name={catVisual.icon} size={16} color={DETAIL.teal} />
+              <Ionicons name={catVisual.icon} size={16} color={DETAIL.navy} />
               <Text style={styles.catText}>{detail.categoryLabel}</Text>
+            </View>
+            <View style={styles.ratingRow}>
+              {/* RTL: number first (right), star second (left) */}
+              <Text style={styles.ratingText}>{ratingLabel}</Text>
+              <Ionicons name="star" size={15} color={DETAIL.gold} />
+              {hasReviews ? (
+                <Text style={styles.ratingCount}>({provider.reviewCount})</Text>
+              ) : null}
             </View>
           </View>
 
           <Text style={styles.title}>{provider.businessName}</Text>
-          {location ? (
+
+          {addressLine ? (
             <View style={styles.locRow}>
               <Ionicons name="location-sharp" size={14} color={DETAIL.muted} />
-              <Text style={styles.locText}>{location}</Text>
+              <Text style={styles.locText}>{addressLine}</Text>
             </View>
           ) : null}
 
           {detail.show360 ? (
-            <Pressable style={styles.primaryBtn} onPress={openMaps}>
-              <Ionicons name="sync-outline" size={18} color="#fff" />
+            <Pressable style={styles.primaryBtn} onPress={openTour}>
               <Text style={styles.primaryBtnText}>جولة 360°</Text>
+              <Ionicons name="sync-outline" size={18} color="#fff" />
             </Pressable>
           ) : null}
 
@@ -311,14 +442,11 @@ export function ProviderProfileScreen() {
 
           <View style={styles.divider} />
 
-          {/* About */}
           <Text style={styles.sectionTitle}>{detail.aboutTitle}</Text>
           <Text style={styles.body}>{aboutPreview}</Text>
-          {detail.aboutText.length > 120 ? (
+          {detail.aboutText.length > 140 ? (
             <Pressable onPress={() => setAboutExpanded((v) => !v)}>
-              <Text style={styles.link}>
-                {aboutExpanded ? 'عرض أقل' : 'عرض المزيد'}
-              </Text>
+              <Text style={styles.link}>{aboutExpanded ? 'عرض أقل' : 'عرض المزيد'}</Text>
             </Pressable>
           ) : null}
 
@@ -327,10 +455,7 @@ export function ProviderProfileScreen() {
               <View style={styles.divider} />
               <Text style={styles.sectionTitle}>المساحات المتوفرة</Text>
               {detail.spaces.map((row) => (
-                <View key={row.key} style={styles.iconLine}>
-                  <Text style={styles.iconLineText}>{row.label}</Text>
-                  <Ionicons name={row.icon} size={18} color={DETAIL.muted} />
-                </View>
+                <IconLine key={row.key} icon={row.icon} label={row.label} />
               ))}
             </>
           ) : null}
@@ -339,18 +464,26 @@ export function ProviderProfileScreen() {
             <>
               <View style={styles.divider} />
               <Text style={styles.sectionTitle}>وسائل الراحة</Text>
-              {detail.amenities.slice(0, 4).map((row) => (
-                <View key={row.key} style={styles.iconLine}>
-                  <Text style={styles.iconLineText}>{row.label}</Text>
-                  <Ionicons name={row.icon} size={18} color={DETAIL.muted} />
-                </View>
+              {visibleAmenities.map((row) => (
+                <IconLine key={row.key} icon={row.icon} label={row.label} />
               ))}
-              <Pressable style={styles.outlinePill}>
-                <Ionicons name="chevron-back" size={16} color={DETAIL.muted} />
-                <Text style={styles.outlinePillText}>
-                  عرض جميع وسائل الراحة الـ {detail.amenities.length}
-                </Text>
-              </Pressable>
+              {detail.amenities.length > 4 ? (
+                <Pressable
+                  style={styles.outlinePill}
+                  onPress={() => setAmenitiesExpanded((v) => !v)}
+                >
+                  <Text style={styles.outlinePillText}>
+                    {amenitiesExpanded
+                      ? 'عرض أقل'
+                      : `عرض جميع وسائل الراحة الـ ${detail.amenities.length}`}
+                  </Text>
+                  <Ionicons
+                    name={amenitiesExpanded ? 'chevron-down' : 'chevron-back'}
+                    size={16}
+                    color={DETAIL.muted}
+                  />
+                </Pressable>
+              ) : null}
             </>
           ) : null}
 
@@ -358,19 +491,51 @@ export function ProviderProfileScreen() {
             <>
               <View style={styles.divider} />
               <Text style={styles.sectionTitle}>العنوان</Text>
-              <View style={styles.locRow}>
+              <View style={styles.locRowTight}>
                 <Ionicons name="location-sharp" size={14} color={DETAIL.muted} />
-                <Text style={styles.locText}>{location || 'صنعاء'}</Text>
+                <Text style={styles.locText}>{addressLine || 'صنعاء'}</Text>
               </View>
               <Pressable style={styles.mapCard} onPress={openMaps}>
-                <View style={styles.mapInner}>
-                  <Ionicons name="map-outline" size={36} color={DETAIL.teal} />
-                  <Text style={styles.mapHint}>اضغط لفتح الخريطة</Text>
-                  <View style={styles.mapPin}>
-                    <Ionicons name="location" size={28} color="#E11D48" />
-                  </View>
-                </View>
+                <MapView
+                  style={[styles.map, RTL_MAP_FIX]}
+                  pointerEvents="none"
+                  scrollEnabled={false}
+                  zoomEnabled={false}
+                  rotateEnabled={false}
+                  pitchEnabled={false}
+                  toolbarEnabled={false}
+                  initialRegion={{
+                    ...mapCoords,
+                    latitudeDelta: 0.012,
+                    longitudeDelta: 0.012,
+                  }}
+                >
+                  <Marker coordinate={mapCoords} pinColor="#E11D48" />
+                </MapView>
               </Pressable>
+            </>
+          ) : null}
+
+          {detail.showRatingBanner ? (
+            <>
+              <View style={styles.divider} />
+              <LinearGradient
+                colors={[DETAIL.ratingCardStart, DETAIL.ratingCardEnd]}
+                start={{ x: 0, y: 0.5 }}
+                end={{ x: 1, y: 0.5 }}
+                style={styles.ratingBanner}
+              >
+                {/* RTL: first = right → value on right of stars */}
+                <Text style={styles.ratingBannerValue}>{ratingLabel}</Text>
+                <StarRow rating={hasReviews ? rating : 0} />
+                {hasReviews ? (
+                  <Text style={styles.ratingBannerCount}>
+                    {provider.reviewCount} تقييم
+                  </Text>
+                ) : (
+                  <Text style={styles.ratingBannerCount}>لا توجد تقييمات بعد</Text>
+                )}
+              </LinearGradient>
             </>
           ) : null}
 
@@ -378,9 +543,7 @@ export function ProviderProfileScreen() {
             <>
               <View style={styles.divider} />
               <Text style={styles.sectionTitle}>العربون</Text>
-              <Text style={styles.priceTeal}>
-                {formatPrice(detail.depositAmount)}
-              </Text>
+              <Text style={styles.priceAccent}>{formatPrice(detail.depositAmount)}</Text>
               <Text style={styles.body}>{detail.depositNote}</Text>
             </>
           ) : null}
@@ -389,9 +552,7 @@ export function ProviderProfileScreen() {
             <>
               <View style={styles.divider} />
               <Text style={styles.sectionTitle}>التأمين على الممتلكات</Text>
-              <Text style={styles.priceTeal}>
-                {formatPrice(detail.insuranceAmount)}
-              </Text>
+              <Text style={styles.priceAccent}>{formatPrice(detail.insuranceAmount)}</Text>
               {detail.insuranceMeta ? (
                 <Text style={styles.bodyStrong}>{detail.insuranceMeta}</Text>
               ) : null}
@@ -403,9 +564,14 @@ export function ProviderProfileScreen() {
             <>
               <View style={styles.divider} />
               {detail.terms.map((t, i) => (
-                <View key={i} style={styles.bulletRow}>
+                <Text key={`term-${i}`} style={styles.termLine}>
+                  {t}
+                </Text>
+              ))}
+              {detail.policyBullets.map((t, i) => (
+                <View key={`pol-${i}`} style={styles.bulletRow}>
+                  <View style={styles.diamond} />
                   <Text style={styles.bulletText}>{t}</Text>
-                  <View style={styles.bullet} />
                 </View>
               ))}
             </>
@@ -416,119 +582,166 @@ export function ProviderProfileScreen() {
               onLayout={(e) => {
                 packagesY.current = sheetY.current + e.nativeEvent.layout.y;
               }}
+              style={styles.packagesSection}
             >
-              <View style={styles.thickDivider} />
-              <Text style={styles.sectionTitle}>باقات الأسعار</Text>
-              <Text style={styles.subHint}>تختلف الأيام المتفرغة باختلاف الباقة.</Text>
+              <Text style={styles.packagesHeading}>باقات الأسعار</Text>
+              <Text style={styles.packagesSub}>
+                تختلف الأيام المتفرغة باختلاف الباقة.
+              </Text>
               <FlatList
                 data={detail.packages}
                 horizontal
-                inverted
                 showsHorizontalScrollIndicator={false}
                 keyExtractor={(p) => p.id}
                 contentContainerStyle={styles.packagesRow}
-                renderItem={({ item }) => (
-                  <PackageCard
-                    pkg={item}
-                    priceLabel={formatPrice(item.price)}
-                    selected={item.id === (selectedPackage?.id ?? selectedPackageId)}
-                    onPress={() => {
-                      setSelectedPackageId(item.id);
-                      setPackagesRevealed(true);
-                    }}
-                  />
-                )}
+                renderItem={({ item }) => {
+                  const converted = convertFromNewYer(item.price, currency);
+                  const amount =
+                    currency === 'USD' || currency === 'SAR'
+                      ? formatNumber(converted, 2)
+                      : formatNumber(Math.round(converted));
+                  return (
+                    <PackageCard
+                      pkg={item}
+                      amountLabel={amount}
+                      currencyLabel={getCurrency(currency).label}
+                      capacityLabel={
+                        item.capacityLabel ?? detail.maxGuestsLabel
+                      }
+                      selected={item.id === (selectedPackage?.id ?? selectedPackageId)}
+                      onPress={() => {
+                        setSelectedPackageId(item.id);
+                        setPackagesRevealed(true);
+                      }}
+                    />
+                  );
+                }}
               />
             </View>
           ) : null}
         </View>
       </ScrollView>
 
-      {/* Sticky top actions — outside scroll */}
-      <View
-        style={[styles.stickyTop, { top: insets.top + 8 }]}
-        pointerEvents="box-none"
-      >
-        {/* RTL: first child = physical right → back on the right */}
-        <BackButton
-          elevated
-          color={DETAIL.text}
-          onPress={() => navigation.goBack()}
-        />
+      {/* Sticky top: back right; share then heart so heart is outermost left in RTL */}
+      <View style={[styles.stickyTop, { top: insets.top + 8 }]} pointerEvents="box-none">
+        <BackButton elevated color={DETAIL.navy} onPress={() => navigation.goBack()} />
         <View style={styles.heroActions}>
+          <Pressable style={styles.roundBtn} onPress={share}>
+            <Ionicons name="paper-plane-outline" size={19} color={DETAIL.navy} />
+          </Pressable>
           <Pressable style={styles.roundBtn} onPress={onToggleFavorite}>
             <Ionicons
               name={fav ? 'heart' : 'heart-outline'}
               size={20}
-              color={fav ? '#E11D48' : DETAIL.text}
+              color={fav ? '#E11D48' : DETAIL.navy}
             />
-          </Pressable>
-          <Pressable style={styles.roundBtn} onPress={share}>
-            <Ionicons name="share-social-outline" size={20} color={DETAIL.text} />
           </Pressable>
         </View>
       </View>
 
-      {/* Sticky CTA */}
       <View style={[styles.sticky, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-        <Pressable style={styles.stickyBtn} onPress={onStickyCta}>
-          <Ionicons name="book-outline" size={18} color="#fff" />
-          <Text style={styles.stickyBtnText}>{detail.ctaLabel}</Text>
+        <Pressable onPress={onStickyCta}>
+          <LinearGradient
+            colors={[DETAIL.navyLight, DETAIL.navy, DETAIL.navyDeep]}
+            start={{ x: 0, y: 0.5 }}
+            end={{ x: 1, y: 0.5 }}
+            style={styles.stickyBtn}
+          >
+            <Text style={styles.stickyBtnText}>{detail.ctaLabel}</Text>
+            <Ionicons name="book-outline" size={18} color="#fff" />
+          </LinearGradient>
         </Pressable>
       </View>
+
+      {detail.isHotel ? (
+        <HotelRoomsSheet
+          visible={roomsOpen}
+          onClose={() => setRoomsOpen(false)}
+          rooms={provider.services ?? []}
+          fallbackImage={provider.images?.[0] ?? provider.logoUrl}
+          currency={currency}
+          onReserve={(room) => {
+            setRoomsOpen(false);
+            startBooking(room);
+          }}
+        />
+      ) : null}
+
+      <ImageGalleryModal
+        visible={heroGalleryOpen && images.length > 0}
+        title={provider.businessName}
+        uris={images}
+        initialIndex={imageIndex}
+        onClose={() => setHeroGalleryOpen(false)}
+      />
     </View>
   );
 }
 
 function PackageCard({
   pkg,
-  priceLabel,
+  amountLabel,
+  currencyLabel,
+  capacityLabel,
   selected,
   onPress,
 }: {
   pkg: PricePackage;
-  priceLabel: string;
+  amountLabel: string;
+  currencyLabel: string;
+  capacityLabel?: string;
   selected: boolean;
   onPress: () => void;
 }) {
+  const guestsLabel = capacityLabel ?? pkg.capacityLabel;
   return (
     <Pressable
       style={[styles.packageCard, selected && styles.packageCardSelected]}
       onPress={onPress}
     >
-      {selected ? (
-        <View style={styles.packageCheck}>
-          <Ionicons name="checkmark" size={13} color="#fff" />
+      <View style={styles.packageTop}>
+        <View style={styles.packagePriceRow}>
+          <Text style={styles.packageAmount} numberOfLines={1}>
+            {amountLabel}
+          </Text>
+          <Text style={styles.packageCurrency}>
+            {currencyLabel}
+            {pkg.period === 'PER_NIGHT' ? ' / ليلة' : ''}
+          </Text>
         </View>
-      ) : null}
-      <Text style={styles.packagePrice}>{priceLabel}</Text>
-      <Text style={styles.packageTitle}>{pkg.title}</Text>
-      {pkg.capacityLabel || pkg.timeLabel ? <View style={styles.packageLine} /> : null}
-      {pkg.capacityLabel ? (
-        <View style={styles.packageMeta}>
-          <Ionicons name="people-outline" size={15} color={DETAIL.muted} />
-          <Text style={styles.packageMetaText}>{pkg.capacityLabel}</Text>
-        </View>
-      ) : null}
-      {pkg.timeLabel ? (
-        <View style={styles.packageMeta}>
-          <Ionicons name="time-outline" size={15} color={DETAIL.muted} />
-          <Text style={styles.packageMetaText}>{pkg.timeLabel}</Text>
-        </View>
-      ) : null}
+        <Text style={styles.packageTitle} numberOfLines={2}>
+          {pkg.title}
+        </Text>
+      </View>
+
+      <View style={styles.packageLine} />
+
+      <View style={styles.packageDetails}>
+        {guestsLabel ? (
+          <View style={styles.packageMeta}>
+            <Ionicons name="people-outline" size={20} color="#98A2B3" />
+            <Text style={styles.packageMetaText}>{guestsLabel}</Text>
+          </View>
+        ) : null}
+        {pkg.timeLabel ? (
+          <View style={styles.packageMeta}>
+            <Ionicons name="time-outline" size={20} color="#98A2B3" />
+            <Text style={styles.packageMetaText}>{pkg.timeLabel}</Text>
+          </View>
+        ) : null}
+      </View>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: DETAIL.pageBg },
-  boot: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
   heroWrap: { width: SCREEN_W, backgroundColor: '#222' },
   heroFallback: {
     width: SCREEN_W,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#334',
+    backgroundColor: DETAIL.navyLight,
   },
   stickyTop: {
     position: 'absolute',
@@ -544,18 +757,18 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(255,255,255,0.96)',
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
-    shadowOpacity: 0.12,
+    shadowOpacity: 0.1,
     shadowRadius: 4,
     shadowOffset: { width: 0, height: 2 },
     elevation: 3,
   },
   counter: {
     position: 'absolute',
-    bottom: 28,
+    bottom: 36,
     right: 16,
     backgroundColor: 'rgba(0,0,0,0.55)',
     paddingHorizontal: 12,
@@ -564,50 +777,66 @@ const styles = StyleSheet.create({
   },
   counterText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   sheet: {
-    marginTop: -22,
+    marginTop: -28,
     backgroundColor: '#fff',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 18,
-    paddingTop: 18,
-    paddingBottom: 24,
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 28,
   },
   metaRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 12,
   },
   ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   ratingText: { fontSize: 14, fontWeight: '700', color: DETAIL.text },
+  ratingCount: { fontSize: 12, color: DETAIL.muted, marginStart: 2 },
   catRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  catText: { fontSize: 13, fontWeight: '700', color: DETAIL.teal },
+  catText: { fontSize: 13, fontWeight: '700', color: DETAIL.navy },
   title: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '800',
     color: DETAIL.text,
     marginBottom: 8,
     width: '100%',
+    textAlign: 'right',
+    writingDirection: 'rtl',
   },
   locRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginBottom: 14,
+    marginBottom: 4,
   },
-  locText: { fontSize: 13, color: DETAIL.muted, flex: 1 },
+  locRowTight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 12,
+  },
+  locText: {
+    fontSize: 13,
+    color: DETAIL.muted,
+    flex: 1,
+    textAlign: 'right',
+    writingDirection: 'rtl',
+  },
   primaryBtn: {
     height: 50,
     borderRadius: 14,
-    backgroundColor: DETAIL.teal,
+    backgroundColor: DETAIL.navy,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    marginBottom: 14,
+    marginTop: 12,
+    marginBottom: 4,
   },
   primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '800' },
-  chipsRow: { gap: 10, paddingBottom: 14 },
+  chipsRow: { gap: 10, paddingBottom: 4, paddingTop: 12 },
   chip: {
     width: 100,
     minHeight: 84,
@@ -620,11 +849,16 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     backgroundColor: DETAIL.chipBg,
   },
-  chipLabel: { fontSize: 12, fontWeight: '700', color: DETAIL.text, textAlign: 'center' },
+  chipLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: DETAIL.text,
+    textAlign: 'center',
+  },
   divider: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: DETAIL.line,
-    marginVertical: 16,
+    marginVertical: 18,
   },
   thickDivider: {
     height: 1,
@@ -635,14 +869,18 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '800',
     color: DETAIL.text,
-    marginBottom: 10,
+    marginBottom: 12,
     width: '100%',
+    textAlign: 'right',
+    writingDirection: 'rtl',
   },
   body: {
-    fontSize: 13,
-    lineHeight: 22,
+    fontSize: 14,
+    lineHeight: 24,
     color: DETAIL.muted,
     width: '100%',
+    textAlign: 'right',
+    writingDirection: 'rtl',
   },
   bodyStrong: {
     fontSize: 14,
@@ -650,21 +888,28 @@ const styles = StyleSheet.create({
     color: DETAIL.text,
     marginBottom: 6,
     width: '100%',
+    textAlign: 'right',
   },
   link: {
     marginTop: 8,
     fontSize: 13,
     fontWeight: '700',
-    color: DETAIL.teal,
+    color: DETAIL.navy,
+    textAlign: 'right',
   },
   iconLine: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 10,
-    paddingVertical: 8,
+    gap: 12,
+    paddingVertical: 9,
   },
-  iconLineText: { fontSize: 14, color: DETAIL.text, flex: 1 },
+  iconLineText: {
+    fontSize: 14,
+    color: DETAIL.text,
+    flex: 1,
+    textAlign: 'right',
+    writingDirection: 'rtl',
+  },
   outlinePill: {
     marginTop: 10,
     borderWidth: 1,
@@ -678,101 +923,182 @@ const styles = StyleSheet.create({
   },
   outlinePillText: { fontSize: 13, fontWeight: '600', color: DETAIL.muted },
   mapCard: {
-    marginTop: 10,
-    height: 160,
+    height: 168,
     borderRadius: 16,
     overflow: 'hidden',
     backgroundColor: '#E8EEF8',
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: DETAIL.border,
   },
-  mapInner: {
-    flex: 1,
+  map: { ...StyleSheet.absoluteFillObject },
+  ratingBanner: {
+    borderRadius: 16,
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 14,
   },
-  mapHint: { fontSize: 12, color: DETAIL.muted, fontWeight: '600' },
-  mapPin: { position: 'absolute', top: '42%' },
-  priceTeal: {
-    fontSize: 18,
+  starRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  ratingBannerValue: {
+    fontSize: 28,
     fontWeight: '800',
-    color: DETAIL.teal,
+    color: DETAIL.text,
+  },
+  ratingBannerCount: {
+    fontSize: 12,
+    color: DETAIL.muted,
+    fontWeight: '600',
+  },
+  priceAccent: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: DETAIL.navy,
     marginBottom: 8,
     width: '100%',
+    textAlign: 'right',
+    writingDirection: 'rtl',
+  },
+  termLine: {
+    fontSize: 14,
+    lineHeight: 26,
+    color: DETAIL.text,
+    marginBottom: 6,
+    width: '100%',
+    textAlign: 'right',
+    writingDirection: 'rtl',
   },
   bulletRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 8,
-    marginBottom: 8,
+    gap: 10,
+    marginTop: 8,
   },
-  bullet: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#B0B0B0',
+  diamond: {
+    width: 8,
+    height: 8,
+    backgroundColor: DETAIL.navy,
+    transform: [{ rotate: '45deg' }],
     marginTop: 7,
   },
-  bulletText: { flex: 1, fontSize: 13, lineHeight: 20, color: DETAIL.muted },
-  subHint: { fontSize: 12, color: DETAIL.muted, marginBottom: 12, width: '100%' },
-  packagesRow: { gap: 12, paddingVertical: 4, paddingEnd: 2 },
-  packageCard: {
-    width: SCREEN_W * 0.7,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: DETAIL.border,
-    paddingTop: 18,
-    paddingBottom: 16,
-    paddingHorizontal: 16,
-    backgroundColor: '#fff',
-    minHeight: 132,
+  bulletText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 22,
+    color: DETAIL.muted,
+    textAlign: 'right',
+    writingDirection: 'rtl',
   },
-  packageCardSelected: {
-    borderWidth: 2,
-    borderColor: DETAIL.teal,
+  subHint: {
+    fontSize: 12,
+    color: DETAIL.muted,
+    marginBottom: 12,
+    width: '100%',
+    textAlign: 'right',
   },
-  packageCheck: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: DETAIL.teal,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1,
+  packagesSection: {
+    marginTop: 8,
+    paddingTop: 8,
   },
-  packagePrice: {
+  packagesHeading: {
     fontSize: 20,
     fontWeight: '800',
-    color: DETAIL.teal,
+    color: DETAIL.text,
+    marginBottom: 6,
     width: '100%',
     textAlign: 'right',
-    paddingEnd: 28,
+    writingDirection: 'rtl',
   },
-  packageTitle: {
+  packagesSub: {
     fontSize: 13,
     color: DETAIL.muted,
-    marginTop: 6,
-    marginBottom: 12,
+    marginBottom: 18,
     width: '100%',
     textAlign: 'right',
+    writingDirection: 'rtl',
+  },
+  packagesRow: {
+    gap: 14,
+    paddingVertical: 4,
+    paddingBottom: 8,
+  },
+  packageCard: {
+    width: SCREEN_W * 0.84,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#E6EBF1',
+    paddingTop: 22,
+    paddingBottom: 20,
+    paddingHorizontal: 20,
+    backgroundColor: '#fff',
+    shadowColor: '#0D1B3E',
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 3,
+  },
+  packageCardSelected: {
+    borderWidth: 1.5,
+    borderColor: DETAIL.navy,
+    shadowOpacity: 0.14,
+  },
+  packageTop: {
+    gap: 8,
+    marginBottom: 16,
+  },
+  packagePriceRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-start',
+    gap: 8,
+  },
+  packageAmount: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: DETAIL.gold,
+    letterSpacing: -0.3,
+  },
+  packageCurrency: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: DETAIL.text,
+  },
+  packageTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: DETAIL.muted,
+    width: '100%',
+    textAlign: 'right',
+    writingDirection: 'rtl',
   },
   packageLine: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: DETAIL.line,
-    marginBottom: 12,
+    height: 1,
+    backgroundColor: '#EEF1F5',
+    marginBottom: 16,
+  },
+  packageDetails: {
+    gap: 12,
   },
   packageMeta: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-start',
-    gap: 6,
-    marginBottom: 6,
+    gap: 10,
   },
-  packageMetaText: { fontSize: 13, color: DETAIL.muted, fontWeight: '600' },
+  packageMetaText: {
+    flexShrink: 1,
+    fontSize: 14,
+    color: DETAIL.muted,
+    fontWeight: '500',
+    textAlign: 'right',
+    writingDirection: 'rtl',
+  },
   sticky: {
     position: 'absolute',
     left: 0,
@@ -780,18 +1106,20 @@ const styles = StyleSheet.create({
     bottom: 0,
     paddingHorizontal: 16,
     paddingTop: 10,
-    backgroundColor: 'rgba(255,255,255,0.96)',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: DETAIL.line,
+    backgroundColor: 'rgba(255,255,255,0.97)',
   },
   stickyBtn: {
     height: 54,
     borderRadius: 999,
-    backgroundColor: DETAIL.teal,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
+    shadowColor: DETAIL.navy,
+    shadowOpacity: 0.28,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
   },
   stickyBtnText: { color: '#fff', fontSize: 15, fontWeight: '800' },
 });

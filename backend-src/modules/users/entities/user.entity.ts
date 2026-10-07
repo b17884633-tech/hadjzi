@@ -3,7 +3,6 @@ import {
   CreateDateColumn,
   Entity,
   OneToMany,
-  OneToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -55,8 +54,8 @@ export class User {
   @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
   updatedAt: Date;
 
-  @OneToOne(() => Provider, (provider) => provider.user)
-  provider?: Provider;
+  @OneToMany(() => Provider, (provider) => provider.user)
+  providers?: Provider[];
 
   @OneToMany(() => Booking, (booking) => booking.customer)
   bookings?: Booking[];

@@ -1,11 +1,20 @@
-import { IsEnum, IsOptional, IsString, IsUUID } from 'class-validator';
+import {
+  IsEnum,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MinLength,
+} from 'class-validator';
 import { DisputeStatus } from '../../../common/enums';
 
 export class CreateDisputeDto {
+  /** Optional — omit for general app feedback / suggestions. */
+  @IsOptional()
   @IsUUID('loose')
-  bookingId: string;
+  bookingId?: string;
 
   @IsString()
+  @MinLength(3)
   reason: string;
 }
 

@@ -1,6 +1,9 @@
 import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { BookingService } from './booking.service';
-import { CreateBookingDto } from './dto/create-booking.dto';
+import {
+  CreateBookingDto,
+  CreateDeskBookingDto,
+} from './dto/create-booking.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -14,6 +17,12 @@ export class BookingController {
   @Post()
   create(@CurrentUser() user: User, @Body() dto: CreateBookingDto) {
     return this.bookings.create(user, dto);
+  }
+
+  @Roles(UserRole.PROVIDER, UserRole.ADMIN)
+  @Post('desk')
+  createDesk(@CurrentUser() user: User, @Body() dto: CreateDeskBookingDto) {
+    return this.bookings.createDesk(user, dto);
   }
 
   @Get()
@@ -30,6 +39,12 @@ export class BookingController {
   async cancel(@CurrentUser() user: User, @Param('id') id: string) {
     await this.bookings.findOneForUser(user, id);
     return this.bookings.transition(id, BookingStatus.CANCELLED);
+  }
+
+  @Roles(UserRole.ADMIN)
+  @Patch(':id/confirm-payment')
+  async confirmPayment(@CurrentUser() user: User, @Param('id') id: string) {
+    return this.bookings.confirmPayment(user, id);
   }
 
   @Roles(UserRole.PROVIDER, UserRole.ADMIN)

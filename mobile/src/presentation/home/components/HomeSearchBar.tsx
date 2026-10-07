@@ -1,35 +1,73 @@
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { AppText as Text } from '@/core/ui/components/AppText';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../../core/ui/theme';
 
-interface HomeSearchBarProps {
-  onSearchPress?: () => void;
+export type HomeWhenFilter = 'any' | 'today' | 'tomorrow' | 'custom';
+
+export function whenFilterLabel(when: HomeWhenFilter, customDate?: string): string {
+  if (when === 'today') return 'اليوم';
+  if (when === 'tomorrow') return 'غداً';
+  if (when === 'custom' && customDate) return customDate;
+  if (when === 'custom') return 'تاريخ مخصص';
+  return 'أي وقت';
 }
 
-export function HomeSearchBar({ onSearchPress }: HomeSearchBarProps) {
+type Props = {
+  query: string;
+  onQueryChange: (value: string) => void;
+  cityName: string;
+  when: HomeWhenFilter;
+  customDate?: string;
+  onCityPress: () => void;
+  onWhenPress: () => void;
+  onSearch: () => void;
+};
+
+export function HomeSearchBar({
+  query,
+  onQueryChange,
+  cityName,
+  when,
+  customDate,
+  onCityPress,
+  onWhenPress,
+  onSearch,
+}: Props) {
   return (
     <View style={styles.wrap}>
-      <Pressable style={styles.search} onPress={onSearchPress}>
+      <View style={styles.search}>
         <Ionicons name="search" size={18} color={theme.colors.primary} />
-        <Text style={styles.placeholder} numberOfLines={1}>
-          ابحث عن خدمة، مكان، أو مدينة...
-        </Text>
+        <TextInput
+          style={styles.input}
+          value={query}
+          onChangeText={onQueryChange}
+          placeholder="ابحث عن خدمة، مكان، أو مدينة..."
+          placeholderTextColor={theme.colors.textSecondary}
+          returnKeyType="search"
+          onSubmitEditing={onSearch}
+          clearButtonMode="while-editing"
+          textAlign="right"
+        />
         <Ionicons name="mic-outline" size={18} color={theme.colors.textSecondary} />
-      </Pressable>
+      </View>
 
       <View style={styles.filters}>
-        <Pressable style={styles.filterChip}>
+        <Pressable style={styles.filterChip} onPress={onCityPress}>
           <Ionicons name="business-outline" size={14} color={theme.colors.primary} />
-          <Text style={styles.filterText}>صنعاء</Text>
+          <Text style={styles.filterText} numberOfLines={1}>
+            {cityName}
+          </Text>
           <Ionicons name="chevron-down" size={13} color={theme.colors.textSecondary} />
         </Pressable>
-        <Pressable style={styles.filterChip}>
+        <Pressable style={styles.filterChip} onPress={onWhenPress}>
           <Ionicons name="calendar-outline" size={14} color={theme.colors.primary} />
-          <Text style={styles.filterText}>أي وقت</Text>
+          <Text style={styles.filterText} numberOfLines={1}>
+            {whenFilterLabel(when, customDate)}
+          </Text>
           <Ionicons name="chevron-down" size={13} color={theme.colors.textSecondary} />
         </Pressable>
-        <Pressable style={styles.searchButton} onPress={onSearchPress}>
+        <Pressable style={styles.searchButton} onPress={onSearch}>
           <Ionicons name="search" size={15} color="#FFFFFF" />
           <Text style={styles.searchButtonText}>بحث</Text>
         </Pressable>
@@ -57,11 +95,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     gap: 8,
   },
-  placeholder: {
+  input: {
     flex: 1,
     fontSize: 13,
-    color: theme.colors.textSecondary,
-    textAlign: 'right',
+    color: theme.colors.text,
+    paddingVertical: 0,
     writingDirection: 'rtl',
   },
   filters: {

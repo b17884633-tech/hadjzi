@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   TextInput,
   View,
@@ -14,13 +13,16 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BackButton } from '../../core/ui/components/BackButton';
+import { FormKeyboardView } from '../../core/ui/components/FormKeyboardView';
+import { KeyboardAwareScrollView } from '../../core/ui/components/KeyboardAwareScrollView';
 import { DEPOSIT_PERCENTAGE } from '../../core/common/bookingConstants';
 import { theme } from '../../core/ui/theme';
 import { useApp } from '../../di/AppProvider';
 import { RootStackParamList } from '../navigation/types';
 import {
-  eachIsoDate,
+  eachBlockedIsoDate,
   nightsBetween,
+  packagePeriodLabel,
   periodLabelForSlot,
   resolveBookingFlow,
   ServiceAvailability,
@@ -64,7 +66,45 @@ export function BookingDateScreen() {
   const [rangeError, setRangeError] = useState<string | null>(null);
 
   const depositPct = DEPOSIT_PERCENTAGE;
-  const isRange = flow.kind === 'STAY_RANGE';
+  const packagePeriod = params.packagePeriod;
+  const isDayPackage =
+    packagePeriod === 'MORNING' || packagePeriod === 'EVENING';
+  /** Overnight / hotel-style range — not for morning/evening chalet packages. */
+  const isRange = flow.kind === 'STAY_RANGE' && !isDayPackage;
+  const fixedPeriodLabel =
+    params.timeLabel ?? packagePeriodLabel(packagePeriod) ?? undefined;
+
+  const guestsPerRoom = params.guestsPerRoom;
+  const maxGuests =
+    guestsPerRoom != null && guestsPerRoom > 0
+      ? guestsPerRoom * (flow.needsRooms ? Math.max(1, rooms) : 1)
+      : undefined;
+
+  const clampGuests = (nextAdults: number, nextChildren: number) => {
+    let a = Math.max(1, nextAdults);
+    let c = Math.max(0, nextChildren);
+    if (maxGuests != null) {
+      const total = a + c;
+      if (total > maxGuests) {
+        const overflow = total - maxGuests;
+        if (c >= overflow) c -= overflow;
+        else {
+          a = Math.max(1, a - (overflow - c));
+          c = 0;
+        }
+      }
+    }
+    setAdults(a);
+    setChildrenCount(c);
+  };
+
+  useEffect(() => {
+    if (maxGuests == null) return;
+    if (adults + childrenCount > maxGuests) {
+      clampGuests(adults, childrenCount);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- clamp when rooms/capacity change
+  }, [maxGuests, rooms]);
 
   useEffect(() => {
     if (!user) navigation.replace('Auth');
@@ -156,7 +196,7 @@ export function BookingDateScreen() {
 
   const rangeOk = useMemo(() => {
     if (!isRange || !selectedDate || !checkOutDate || nights < 1) return false;
-    const days = eachIsoDate(selectedDate, checkOutDate);
+    const days = eachBlockedIsoDate(selectedDate, checkOutDate);
     return days.every((d) => availableDates.has(d));
   }, [isRange, selectedDate, checkOutDate, nights, availableDates]);
 
@@ -172,7 +212,8 @@ export function BookingDateScreen() {
 
   const canNext = (() => {
     if (loading) return false;
-    if (flow.kind === 'STAY_RANGE') return rangeOk && !!selectedAvailability;
+    if (isRange) return rangeOk && !!selectedAvailability;
+    if (isDayPackage) return !!selectedDate && !!selectedAvailability;
     if (flow.kind === 'QUANTITY_DELIVERY') {
       return !!selectedDate && !!selectedAvailability && quantity >= 1;
     }
@@ -198,8 +239,9 @@ export function BookingDateScreen() {
     setRangeError(null);
     if (!isRange) {
       setSelectedDate(iso);
+      setCheckOutDate(undefined);
       setSelectedSlotId(undefined);
-      setPeriodLabel(undefined);
+      setPeriodLabel(isDayPackage ? fixedPeriodLabel : undefined);
       return;
     }
     // Range: first tap = check-in, second = check-out
@@ -214,7 +256,7 @@ export function BookingDateScreen() {
       setCheckOutDate(undefined);
       return;
     }
-    const days = eachIsoDate(selectedDate, iso);
+    const days = eachBlockedIsoDate(selectedDate, iso);
     const allFree = days.every((d) => availableDates.has(d));
     if (!allFree) {
       setRangeError('بعض الأيام ضمن المدة غير متاحة. اختر نطاقاً آخر.');
@@ -247,8 +289,12 @@ export function BookingDateScreen() {
       bookingType: flow.bookingType,
       availabilityId: selectedAvailability.id,
       bookingDate: selectedDate,
-      startTime: selectedAvailability.startTime,
-      endTime: selectedAvailability.endTime,
+      startTime: isDayPackage
+        ? params.packageFromTime ?? selectedAvailability.startTime
+        : selectedAvailability.startTime,
+      endTime: isDayPackage
+        ? params.packageToTime ?? selectedAvailability.endTime
+        : selectedAvailability.endTime,
       quantity: checkoutQty,
       attendanceType,
       adults,
@@ -257,9 +303,9 @@ export function BookingDateScreen() {
         ? unitPrice
         : checkoutPrice,
       depositPercentage: depositPct,
-      checkOutDate,
-      nights: nights || undefined,
-      periodLabel: periodLabel ?? undefined,
+      checkOutDate: isRange ? checkOutDate : undefined,
+      nights: isRange && nights > 0 ? nights : undefined,
+      periodLabel: periodLabel ?? fixedPeriodLabel ?? undefined,
       durationHours: flow.needsDuration ? durationHours : undefined,
       rooms: flow.needsRooms ? rooms : undefined,
       deliveryTime: flow.needsDeliveryTime ? deliveryTime || undefined : undefined,
@@ -279,19 +325,36 @@ export function BookingDateScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      <FormKeyboardView>
       <View style={styles.header}>
         <BackButton onPress={() => navigation.goBack()} />
         <Text style={styles.headerTitle}>{flow.title}</Text>
         <View style={styles.headerSpacer} />
       </View>
 
-      <ScrollView
+      <KeyboardAwareScrollView
         contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+        avoidKeyboard={false}
+        bottomOffset={100}
       >
-        <Text style={styles.question}>{flow.question}</Text>
-        <Text style={styles.hint}>{flow.hint}</Text>
+        <Text style={styles.question}>
+          {isDayPackage ? 'اختر يوم الحجز' : flow.question}
+        </Text>
+        <Text style={styles.hint}>
+          {isDayPackage
+            ? `باقة ${fixedPeriodLabel ?? 'يومية'} — اختر يوماً واحداً متاحاً.`
+            : flow.hint}
+        </Text>
+        {isDayPackage && fixedPeriodLabel ? (
+          <View style={styles.rangeSummary}>
+            <Text style={styles.rangeText}>{fixedPeriodLabel}</Text>
+            {params.packageFromTime && params.packageToTime ? (
+              <Text style={styles.rangeMeta}>
+                من {params.packageFromTime} إلى {params.packageToTime}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
 
         {loading ? (
           <ActivityIndicator color={theme.colors.primary} style={{ marginTop: 40 }} />
@@ -300,33 +363,35 @@ export function BookingDateScreen() {
             {(flow.kind === 'QUANTITY_DELIVERY' ||
               flow.kind === 'TRANSPORT' ||
               flow.needsRooms) && (
-              <View style={styles.qtyCard}>
-                <Text style={styles.slotsTitle}>
+              <View style={styles.rowStepper}>
+                <Text style={styles.rowLabel} numberOfLines={1}>
                   {flow.quantityLabel ?? 'الكمية'}
                 </Text>
-                <View style={styles.qtyRow}>
+                <View style={styles.rowControls}>
                   <Pressable
-                    style={styles.qtyBtn}
-                    onPress={() =>
-                      flow.needsRooms
-                        ? setRooms((q) => Math.max(1, q - 1))
-                        : setQuantity((q) => Math.max(1, q - 1))
-                    }
-                  >
-                    <Ionicons name="remove" size={18} color="#fff" />
-                  </Pressable>
-                  <Text style={styles.qtyValue}>
-                    {flow.needsRooms ? rooms : quantity}
-                  </Text>
-                  <Pressable
-                    style={styles.qtyBtn}
+                    style={styles.rowBtn}
+                    hitSlop={6}
                     onPress={() =>
                       flow.needsRooms
                         ? setRooms((q) => q + 1)
                         : setQuantity((q) => q + 1)
                     }
                   >
-                    <Ionicons name="add" size={18} color="#fff" />
+                    <Ionicons name="add" size={16} color="#374151" />
+                  </Pressable>
+                  <Text style={styles.rowValue}>
+                    {flow.needsRooms ? rooms : quantity}
+                  </Text>
+                  <Pressable
+                    style={styles.rowBtn}
+                    hitSlop={6}
+                    onPress={() =>
+                      flow.needsRooms
+                        ? setRooms((q) => Math.max(1, q - 1))
+                        : setQuantity((q) => Math.max(1, q - 1))
+                    }
+                  >
+                    <Ionicons name="remove" size={16} color="#374151" />
                   </Pressable>
                 </View>
               </View>
@@ -496,11 +561,14 @@ export function BookingDateScreen() {
                   </Text>
                   <Ionicons name="card-outline" size={16} color={theme.colors.textSecondary} />
                 </View>
-                {isRange && nights > 0 ? (
+                {isRange ? (
                   <View style={styles.metaRow}>
                     <Text style={styles.metaText}>
-                      {nights} ليلة × {formatPrice(unitPrice)}
-                      {flow.needsRooms ? ` × ${rooms} غرفة` : ''}
+                      {nights > 0
+                        ? `${nights} ليلة × ${formatPrice(unitPrice)}${
+                            flow.needsRooms ? ` × ${rooms} غرفة` : ''
+                          }`
+                        : `السعر لليلة: ${formatPrice(unitPrice)}`}
                     </Text>
                     <Ionicons name="moon-outline" size={16} color={theme.colors.textSecondary} />
                   </View>
@@ -529,7 +597,7 @@ export function BookingDateScreen() {
             ) : null}
           </>
         )}
-      </ScrollView>
+      </KeyboardAwareScrollView>
 
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         <Pressable disabled={!canNext} onPress={onNext}>
@@ -543,15 +611,17 @@ export function BookingDateScreen() {
           </LinearGradient>
         </Pressable>
       </View>
+      </FormKeyboardView>
 
       <GuestDetailsSheet
         visible={guestOpen}
         attendanceType={attendanceType}
         adults={adults}
         children={childrenCount}
+        maxGuests={maxGuests}
         onChangeAttendance={setAttendanceType}
-        onChangeAdults={setAdults}
-        onChangeChildren={setChildrenCount}
+        onChangeAdults={(n) => clampGuests(n, childrenCount)}
+        onChangeChildren={(n) => clampGuests(adults, n)}
         onClose={() => setGuestOpen(false)}
         onNext={() => {
           setGuestOpen(false);
@@ -577,7 +647,7 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
   },
   headerSpacer: { width: 40 },
-  scroll: { paddingHorizontal: 16, paddingBottom: 100, gap: 10 },
+  scroll: { paddingHorizontal: 14, paddingBottom: 100, gap: 12 },
   question: {
     fontSize: 20,
     fontWeight: '800',
@@ -590,7 +660,7 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     textAlign: 'right',
     lineHeight: 20,
-    marginBottom: 4,
+    marginBottom: 2,
   },
   error: {
     fontSize: 12,
@@ -647,34 +717,52 @@ const styles = StyleSheet.create({
   },
   slotText: { fontSize: 13, fontWeight: '600', color: theme.colors.primary },
   slotTextOn: { color: theme.colors.primary, fontWeight: '800' },
-  qtyCard: {
-    backgroundColor: '#fff',
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    gap: 12,
-  },
-  qtyRow: {
+  rowStepper: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 18,
+    justifyContent: 'space-between',
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 12,
   },
-  qtyBtn: {
-    width: 36,
-    height: 36,
+  rowLabel: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: theme.colors.primary,
+    textAlign: 'right',
+  },
+  rowControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    direction: 'ltr',
+  },
+  rowBtn: {
+    width: 34,
+    height: 34,
     borderRadius: 10,
-    backgroundColor: theme.colors.accent,
+    backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#EEF1F5',
+    shadowColor: '#0D1B3E',
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
-  qtyValue: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: theme.colors.primary,
-    minWidth: 28,
+  rowValue: {
+    minWidth: 22,
     textAlign: 'center',
+    fontSize: 16,
+    fontWeight: '700',
+    color: theme.colors.primary,
   },
   routeCard: {
     backgroundColor: '#fff',

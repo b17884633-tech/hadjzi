@@ -71,7 +71,7 @@ const RULES: Array<{ match: RegExp; icon: IconName }> = [
   // Fallbacks
   { match: /صالة|قاعة|أفراح|hall/i, icon: 'business' },
   { match: /شالي|chalet/i, icon: 'sunny' },
-  { match: /فندق|hotel/i, icon: 'bed' },
+  { match: /فنادق|فندق|hotel/i, icon: 'bed' },
   { match: /طيرمان|شقق|apartment/i, icon: 'home' },
   { match: /صح|عياد|طبي|clinic|hospital/i, icon: 'medkit' },
   { match: /عرس|زفاف|wedding/i, icon: 'gift' },

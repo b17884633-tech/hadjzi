@@ -1,6 +1,7 @@
 import { Image, Pressable, StyleSheet, View } from 'react-native';
 import { AppText as Text } from '@/core/ui/components/AppText';
 import { Ionicons } from '@expo/vector-icons';
+import { NotificationBellButton } from '@/core/ui/components/NotificationBellButton';
 import { theme } from '../../../core/ui/theme';
 
 interface HomeHeaderProps {
@@ -8,6 +9,7 @@ interface HomeHeaderProps {
   userName?: string | null;
   onCityPress: () => void;
   onProfilePress?: () => void;
+  onNotificationsPress?: () => void;
 }
 
 export function HomeHeader({
@@ -15,6 +17,7 @@ export function HomeHeader({
   userName,
   onCityPress,
   onProfilePress,
+  onNotificationsPress,
 }: HomeHeaderProps) {
   const welcome = userName?.trim()
     ? `مرحباً ${userName.trim()}`
@@ -22,7 +25,6 @@ export function HomeHeader({
 
   return (
     <View style={styles.wrap}>
-      {/* RTL: first = right → avatar + text on the right */}
       <View style={styles.row}>
         <Pressable onPress={onProfilePress} disabled={!onProfilePress}>
           <View style={styles.avatar}>
@@ -42,6 +44,10 @@ export function HomeHeader({
             <Ionicons name="chevron-down" size={14} color={theme.colors.accentDark} />
           </Pressable>
         </View>
+
+        {onNotificationsPress ? (
+          <NotificationBellButton onPress={onNotificationsPress} />
+        ) : null}
       </View>
     </View>
   );

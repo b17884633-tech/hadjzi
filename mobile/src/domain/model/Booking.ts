@@ -15,6 +15,13 @@ export interface BookingServiceInfo {
   basePrice?: number;
 }
 
+export interface BookingCustomerInfo {
+  id: string;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+}
+
 export interface Booking {
   id: string;
   bookingNumber: string;
@@ -35,14 +42,33 @@ export interface Booking {
   createdAt?: string;
   provider?: BookingProviderInfo | null;
   service?: BookingServiceInfo | null;
+  customer?: BookingCustomerInfo | null;
 }
 
 export interface CreateBookingPayload {
   serviceId: string;
   availabilityId: string;
   bookingDate?: string;
+  /** Exclusive pricing check-out; also blocks this date for chalet capacity. */
+  checkOutDate?: string;
   startTime?: string;
   endTime?: string;
   quantity?: number;
   customerNotes?: string;
+  /** Customer finished checkout with payment proof — do not auto-expire. */
+  paymentSubmitted?: boolean;
+  paymentMethod?: string;
+  transferReference?: string;
+  /** Pay full total instead of deposit only. */
+  payFull?: boolean;
+}
+
+export interface CreateDeskBookingPayload {
+  serviceId: string;
+  date: string;
+  checkOutDate?: string;
+  quantity?: number;
+  guestName: string;
+  guestPhone?: string;
+  notes?: string;
 }

@@ -1,15 +1,13 @@
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   TextInput,
   View,
 } from 'react-native';
 import { AppText as Text } from '@/core/ui/components/AppText';
+import { KeyboardAwareScrollView } from '@/core/ui/components/KeyboardAwareScrollView';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -108,15 +106,7 @@ export function RegisterScreen({ route, navigation }: Props) {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
+      <KeyboardAwareScrollView contentContainerStyle={styles.scroll} bottomOffset={40}>
           <View style={styles.titleBlock}>
             <Text style={styles.title}>إنشاء حساب</Text>
             <View style={styles.underlineRow}>
@@ -203,8 +193,7 @@ export function RegisterScreen({ route, navigation }: Props) {
               </>
             )}
           </Pressable>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAwareScrollView>
 
       <CityPickerSheet
         visible={cityOpen}

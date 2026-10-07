@@ -38,10 +38,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
     }
 
     if (status >= 500) {
-      this.logger.error(
-        `${request.method} ${request.url}`,
-        exception instanceof Error ? exception.stack : String(exception),
-      );
+      const detail =
+        exception instanceof Error
+          ? exception.stack
+          : typeof exception === 'object' && exception !== null
+            ? JSON.stringify(exception)
+            : String(exception);
+      this.logger.error(`${request.method} ${request.url}`, detail);
     }
 
     response.status(status).json({

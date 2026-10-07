@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Pressable,
   ScrollView,
@@ -18,12 +19,14 @@ import { useApp } from '../../di/AppProvider';
 import { Booking } from '../../domain/model/Booking';
 import { RootStackParamList } from '../navigation/types';
 import { BookingInvoiceSheet } from './BookingInvoiceSheet';
+import { notifyBookingStatus } from '../../data/local/notificationStorage';
 import {
   bookingImage,
   bookingTitle,
   capacityFromBooking,
   formatBookingDate,
-  insuranceEstimate,
+  guestDisplayInfo,
+  parseBookingNoteLines,
   statusColors,
   statusIcon,
   statusLabel,
@@ -33,21 +36,28 @@ import {
 type Route = RouteProp<RootStackParamList, 'BookingVoucher'>;
 
 export function BookingVoucherScreen() {
-  const { bookingId } = useRoute<Route>().params;
+  const { bookingId, mode } = useRoute<Route>().params;
+  const isProviderView = mode === 'provider';
   const { container, formatPrice, user } = useApp();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
   const [booking, setBooking] = useState<Booking | null>(null);
   const [loading, setLoading] = useState(true);
   const [invoiceOpen, setInvoiceOpen] = useState(false);
+  const [acting, setActing] = useState(false);
 
-  useEffect(() => {
+  const reload = () => {
     setLoading(true);
     container.bookingRepository
       .getById(bookingId)
       .then(setBooking)
       .catch(() => setBooking(null))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [container, bookingId]);
 
   if (loading) {
@@ -73,17 +83,63 @@ export function BookingVoucherScreen() {
 
   const colors = statusColors(booking.status);
   const image = bookingImage(booking);
-  const title = bookingTitle(booking);
+  const title = isProviderView
+    ? booking.service?.name ?? bookingTitle(booking)
+    : bookingTitle(booking);
   const capacity = capacityFromBooking(booking);
   const timeLabel = timeRangeLabel(booking);
-  const insurance = insuranceEstimate(booking.totalAmount);
   const orderDate = formatBookingDate(booking.createdAt?.slice(0, 10) ?? booking.bookingDate);
   const stayDate = formatBookingDate(booking.bookingDate);
+  const guest = guestDisplayInfo(booking);
+  const noteLines = parseBookingNoteLines(booking.customerNotes);
 
   const openProvider = () => {
     if (booking.providerId) {
       navigation.navigate('ProviderProfile', { providerId: booking.providerId });
     }
+  };
+
+  const onComplete = async () => {
+    setActing(true);
+    try {
+      const updated = await container.bookingRepository.complete(booking.id);
+      setBooking(updated);
+      await notifyBookingStatus(updated, updated.status).catch(() => undefined);
+    } catch (e) {
+      Alert.alert(
+        'تعذر الإكمال',
+        e instanceof Error ? e.message : 'يمكن إكمال الحجوزات المؤكدة فقط',
+      );
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const onCancel = () => {
+    Alert.alert('إلغاء الحجز', `إلغاء الحجز ${booking.bookingNumber}؟`, [
+      { text: 'تراجع', style: 'cancel' },
+      {
+        text: 'إلغاء الحجز',
+        style: 'destructive',
+        onPress: async () => {
+          setActing(true);
+          try {
+            const updated = await container.bookingRepository.cancel(booking.id);
+            setBooking(updated);
+            await notifyBookingStatus(updated, updated.status).catch(
+              () => undefined,
+            );
+          } catch (e) {
+            Alert.alert(
+              'تعذر الإلغاء',
+              e instanceof Error ? e.message : 'حاول مرة أخرى',
+            );
+          } finally {
+            setActing(false);
+          }
+        },
+      },
+    ]);
   };
 
   return (
@@ -100,7 +156,11 @@ export function BookingVoucherScreen() {
         contentContainerStyle={[styles.scroll, { paddingBottom: 110 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
       >
-        <Pressable style={styles.summaryCard} onPress={openProvider}>
+        <Pressable
+          style={styles.summaryCard}
+          onPress={isProviderView ? undefined : openProvider}
+          disabled={isProviderView}
+        >
           {image ? (
             <Image source={{ uri: image }} style={styles.summaryImg} />
           ) : (
@@ -114,7 +174,9 @@ export function BookingVoucherScreen() {
             </Text>
             <Text style={styles.summaryId}>#{booking.bookingNumber}</Text>
           </View>
-          <Ionicons name="chevron-back" size={18} color={theme.colors.textSecondary} />
+          {!isProviderView ? (
+            <Ionicons name="chevron-back" size={18} color={theme.colors.textSecondary} />
+          ) : null}
         </Pressable>
 
         <Text style={styles.sectionLabel}>تفاصيل الحجز</Text>
@@ -135,7 +197,56 @@ export function BookingVoucherScreen() {
           <DetailRow icon="calendar-outline" label="تاريخ الطلب" value={orderDate} />
           <View style={styles.divider} />
           <DetailRow icon="calendar-outline" label="تاريخ الحجز" value={stayDate} />
+          {booking.quantity > 1 ? (
+            <>
+              <View style={styles.divider} />
+              <DetailRow
+                icon="bed-outline"
+                label="الكمية / الغرف"
+                value={String(booking.quantity)}
+              />
+            </>
+          ) : null}
         </View>
+
+        <Text style={styles.sectionLabel}>العميل</Text>
+        <View style={styles.card}>
+          <DetailRow icon="person-outline" label="الاسم" value={guest.name} />
+          {guest.phone ? (
+            <>
+              <View style={styles.divider} />
+              <DetailRow icon="call-outline" label="الهاتف" value={guest.phone} />
+            </>
+          ) : null}
+          {guest.isDesk ? (
+            <>
+              <View style={styles.divider} />
+              <DetailRow
+                icon="storefront-outline"
+                label="نوع الحجز"
+                value="حجز مكتبي (بدون دفع إلكتروني)"
+              />
+            </>
+          ) : null}
+        </View>
+
+        {noteLines.length > 0 ? (
+          <>
+            <Text style={styles.sectionLabel}>تفاصيل إضافية</Text>
+            <View style={styles.card}>
+              {noteLines.map((line, i) => (
+                <View key={`${line.label}-${i}`}>
+                  {i > 0 ? <View style={styles.divider} /> : null}
+                  <DetailRow
+                    icon={line.icon}
+                    label={line.label}
+                    value={line.value}
+                  />
+                </View>
+              ))}
+            </View>
+          </>
+        ) : null}
 
         <Text style={styles.sectionLabel}>الباقة المحجوزة</Text>
         <View style={styles.card}>
@@ -149,16 +260,7 @@ export function BookingVoucherScreen() {
           {timeLabel ? <IconLine icon="time-outline" text={timeLabel} /> : null}
         </View>
 
-        <Text style={styles.sectionLabel}>الدفع والتأمين</Text>
-        <View style={styles.card}>
-          <Text style={styles.softLabel}>التأمين</Text>
-          <Text style={styles.price}>{formatPrice(insurance)}</Text>
-          <Text style={styles.muted}>تأمين قابل للاسترجاع</Text>
-          <Text style={styles.footnote}>
-            يتم ارجاع التأمين عند الخروج من المنشأة والتأكد من سلامة المكان
-          </Text>
-        </View>
-
+        <Text style={styles.sectionLabel}>الدفع</Text>
         <View style={styles.card}>
           {booking.status === 'PENDING_PAYMENT' ? (
             <>
@@ -172,7 +274,10 @@ export function BookingVoucherScreen() {
             </>
           ) : (
             <>
-              <MoneyRow label="دفع كامل" value={formatPrice(booking.totalAmount)} />
+              <MoneyRow
+                label={guest.isDesk ? 'مدفوع في المنشأة' : 'دفع كامل'}
+                value={formatPrice(booking.totalAmount)}
+              />
               <View style={styles.divider} />
             </>
           )}
@@ -180,7 +285,35 @@ export function BookingVoucherScreen() {
         </View>
       </ScrollView>
 
-      {booking.providerId ? (
+      {isProviderView ? (
+        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          <View style={styles.providerActions}>
+            {booking.status === 'CONFIRMED' ? (
+              <Pressable
+                style={[styles.actionBtn, styles.actionPrimary]}
+                disabled={acting}
+                onPress={onComplete}
+              >
+                {acting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.actionPrimaryText}>إكمال الحجز</Text>
+                )}
+              </Pressable>
+            ) : null}
+            {booking.status === 'CONFIRMED' ||
+            booking.status === 'PENDING_PAYMENT' ? (
+              <Pressable
+                style={[styles.actionBtn, styles.actionDanger]}
+                disabled={acting}
+                onPress={onCancel}
+              >
+                <Text style={styles.actionDangerText}>إلغاء</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      ) : booking.providerId ? (
         <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
           <Pressable style={styles.providerBtn} onPress={openProvider}>
             <Ionicons name="business-outline" size={18} color={theme.colors.primary} />
@@ -216,7 +349,11 @@ function DetailRow({
         <Text style={styles.detailLabel}>{label}</Text>
         <Ionicons name={icon} size={16} color={theme.colors.textSecondary} />
       </View>
-      {right ?? <Text style={styles.detailValue}>{value}</Text>}
+      {right ?? (
+        <Text style={styles.detailValue} numberOfLines={3}>
+          {value}
+        </Text>
+      )}
     </View>
   );
 }
@@ -337,7 +474,14 @@ const styles = StyleSheet.create({
   },
   detailLabelWrap: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   detailLabel: { fontSize: 13, color: theme.colors.textSecondary, fontWeight: '600' },
-  detailValue: { fontSize: 13, fontWeight: '700', color: theme.colors.primary },
+  detailValue: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+    color: theme.colors.primary,
+    textAlign: 'left',
+    writingDirection: 'rtl',
+  },
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -374,23 +518,6 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     textAlign: 'right',
   },
-  softLabel: {
-    fontSize: 12,
-    color: theme.colors.textSecondary,
-    textAlign: 'right',
-  },
-  muted: {
-    fontSize: 13,
-    color: theme.colors.primary,
-    fontWeight: '700',
-    textAlign: 'right',
-  },
-  footnote: {
-    fontSize: 11,
-    color: theme.colors.textSecondary,
-    textAlign: 'right',
-    lineHeight: 18,
-  },
   moneyRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -421,5 +548,32 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     color: theme.colors.primary,
+  },
+  providerActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  actionBtn: {
+    flex: 1,
+    height: 50,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionPrimary: {
+    backgroundColor: theme.colors.primary,
+  },
+  actionPrimaryText: {
+    color: '#fff',
+    fontWeight: '800',
+    fontSize: 14,
+  },
+  actionDanger: {
+    backgroundColor: '#FDECEC',
+  },
+  actionDangerText: {
+    color: theme.colors.error,
+    fontWeight: '800',
+    fontSize: 14,
   },
 });

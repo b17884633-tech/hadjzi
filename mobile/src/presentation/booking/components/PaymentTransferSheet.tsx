@@ -2,7 +2,6 @@ import { useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   Share,
   StyleSheet,
   TextInput,
@@ -12,6 +11,7 @@ import { AppText as Text } from '@/core/ui/components/AppText';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardAwareScrollView } from '../../../core/ui/components/KeyboardAwareScrollView';
 import { SmoothBottomSheet } from '../../../core/ui/components/SmoothBottomSheet';
 import { theme } from '../../../core/ui/theme';
 import { useApp } from '../../../di/AppProvider';
@@ -54,11 +54,11 @@ export function PaymentTransferSheet({
           <Text style={styles.title}>محفظة جيب ( تحويل مشترك )</Text>
           <Text style={styles.subtitle}>أدخل بيانات الدفع لإتمام العملية</Text>
 
-          <ScrollView
-            showsVerticalScrollIndicator={false}
+          <KeyboardAwareScrollView
             bounces={false}
             contentContainerStyle={styles.scroll}
-            keyboardShouldPersistTaps="handled"
+            avoidKeyboard={false}
+            bottomOffset={32}
           >
             <Text style={styles.section}>خيارات الدفع</Text>
             <View style={styles.payRow}>
@@ -111,7 +111,7 @@ export function PaymentTransferSheet({
               onChangeText={setRefNo}
               textAlign="right"
             />
-          </ScrollView>
+          </KeyboardAwareScrollView>
 
           <Pressable
             disabled={loading || !refNo.trim()}

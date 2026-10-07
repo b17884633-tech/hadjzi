@@ -41,13 +41,56 @@ export function formatPriceInCurrency(
   amountInNewYer: number,
   code: CurrencyCode = DEFAULT_CURRENCY,
 ): string {
-  const converted = convertFromNewYer(amountInNewYer, code);
+  return formatAmountInCurrency(convertFromNewYer(amountInNewYer, code), code);
+}
+
+/** Format an amount that is already in the target currency (no FX). */
+export function formatAmountInCurrency(amount: number, code: CurrencyCode): string {
   const { symbol } = getCurrency(code);
 
   if (code === 'USD' || code === 'SAR') {
-    const n = formatNumber(converted, 2);
+    const n = formatNumber(amount, 2);
     return code === 'USD' ? `${symbol}${n}` : `${n} ${symbol}`;
   }
 
-  return `${formatNumber(Math.round(converted))} ${symbol}`;
+  return `${formatNumber(Math.round(amount))} ${symbol}`;
+}
+
+/** Provider-entered room/service prices per currency. */
+export type ServicePrices = Partial<Record<CurrencyCode, number>>;
+
+export function readServicePrices(
+  attributes?: Record<string, unknown> | null,
+  basePrice?: number | null,
+): ServicePrices {
+  const prices: ServicePrices = {};
+  const raw = attributes?.prices;
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const obj = raw as Record<string, unknown>;
+    for (const { code } of CURRENCIES) {
+      const n = typeof obj[code] === 'number' ? obj[code] : Number(obj[code]);
+      if (Number.isFinite(n) && n >= 0) prices[code] = n;
+    }
+  }
+  if (prices.NEW_YER == null && basePrice != null && Number.isFinite(basePrice) && basePrice >= 0) {
+    prices.NEW_YER = basePrice;
+  }
+  return prices;
+}
+
+/**
+ * Prefer provider-listed price for the selected currency;
+ * otherwise convert from New YER.
+ */
+export function formatServicePrice(
+  attributes: Record<string, unknown> | undefined | null,
+  basePrice: number | undefined | null,
+  code: CurrencyCode,
+): string | null {
+  const prices = readServicePrices(attributes, basePrice);
+  const listed = prices[code];
+  if (listed != null) return formatAmountInCurrency(listed, code);
+  const yer = prices.NEW_YER ?? basePrice;
+  if (yer == null || !Number.isFinite(yer)) return null;
+  return formatPriceInCurrency(yer, code);
 }

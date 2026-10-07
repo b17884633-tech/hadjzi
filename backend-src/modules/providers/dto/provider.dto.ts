@@ -3,6 +3,7 @@ import {
   IsArray,
   IsInt,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   MaxLength,
@@ -51,6 +52,11 @@ export class CreateProviderDto {
   @IsOptional()
   @IsString()
   cancellationPolicy?: string;
+
+  /** Facility details shown on the public page (spaces, amenities, terms, …). */
+  @IsOptional()
+  @IsObject()
+  attributes?: Record<string, unknown>;
 }
 
 export class UpdateProviderDto {
@@ -94,6 +100,10 @@ export class UpdateProviderDto {
   @IsOptional()
   @IsString()
   cancellationPolicy?: string;
+
+  @IsOptional()
+  @IsObject()
+  attributes?: Record<string, unknown>;
 }
 
 export class ReviewProviderDto {

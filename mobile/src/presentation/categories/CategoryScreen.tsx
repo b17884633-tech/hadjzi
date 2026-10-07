@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
+  TextInput,
   View,
 } from 'react-native';
 import { AppText as Text } from '@/core/ui/components/AppText';
+import { OfferCardSkeletonList } from '@/core/ui/components/Skeleton';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps, NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { CompositeNavigationProp } from '@react-navigation/native';
@@ -16,13 +17,26 @@ import { theme } from '../../core/ui/theme';
 import { useApp } from '../../di/AppProvider';
 import { Category } from '../../domain/model/Category';
 import { Provider } from '../../domain/model/Provider';
+import { Destination } from '../../domain/model/Search';
 import { cheapestService, findCategoryInTree } from '../../data/mappers/homeMappers';
 import { getSelectedCity } from '../../data/local/cityStorage';
 import { HomeStackParamList, RootStackParamList } from '../navigation/types';
 import { BackButton } from '../../core/ui/components/BackButton';
+import { FilterIcon } from '../../core/ui/components/FilterIcon';
 import { CategoryScroller } from '../home/components/CategoryScroller';
 import { FeaturedOfferCard } from '../home/components/FeaturedOfferCard';
+import { HeroPromoBanner, PromoSlide } from '../home/components/HeroPromoBanner';
 import { TopRatedCard } from '../home/components/TopRatedCard';
+import { handlePromoSlidePress } from '../home/bannerNavigation';
+import { CategoryFiltersSheet } from './CategoryFiltersSheet';
+import {
+  CategoryFilterValues,
+  activeFilterChips,
+  countActiveFilters,
+  emptyCategoryFilters,
+  filterProviders,
+} from './categoryFilters';
+import { Banner } from '../../domain/model/Banner';
 
 type Props = {
   route: NativeStackScreenProps<HomeStackParamList, 'Category'>['route'];
@@ -52,32 +66,54 @@ export function CategoryScreen({ route, navigation }: Props) {
 
   const [category, setCategory] = useState<Category | null>(null);
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [cities, setCities] = useState<Destination[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [filters, setFilters] = useState<CategoryFilterValues>(emptyCategoryFilters());
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [banners, setBanners] = useState<Banner[]>([]);
 
   const load = useCallback(async () => {
     setError(null);
     try {
       const storedCity = await getSelectedCity();
-      const [treeRes, searchRes] = await Promise.all([
+      const cityId = filters.cityId ?? storedCity?.id;
+      const [treeRes, searchRes, dests, bannerRes] = await Promise.all([
         container.categoryApi.tree(),
         container.searchRepository.search({
           categoryId,
-          cityId: storedCity?.id,
+          cityId,
+          date: filters.availableDate,
+          endDate: filters.availableEndDate,
+          time: filters.availableTime,
         }),
+        container.searchRepository.getDestinations().catch(() => [] as Destination[]),
+        container.bannerApi
+          .listActive()
+          .catch(() => ({ data: { data: [] as Banner[] } })),
       ]);
       const tree = treeRes.data.data ?? [];
       const found = findCategoryInTree(tree, categoryId);
       setCategory(found);
       setProviders(searchRes.providers ?? []);
+      setCities(dests);
+      setBanners(bannerRes.data.data ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'تعذر تحميل التصنيف');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [categoryId, container]);
+  }, [
+    categoryId,
+    container,
+    filters.cityId,
+    filters.availableDate,
+    filters.availableEndDate,
+    filters.availableTime,
+  ]);
 
   useEffect(() => {
     setLoading(true);
@@ -92,8 +128,33 @@ export function CategoryScreen({ route, navigation }: Props) {
 
   const title = category?.name ?? titleParam ?? 'التصنيف';
   const subcategories = category?.children ?? [];
-  const featured = useMemo(() => providers.slice(0, 8), [providers]);
-  const topRated = useMemo(() => providers.slice(0, 6), [providers]);
+  const bookingType = category?.bookingType;
+
+  const filtered = useMemo(() => {
+    const byFilters = filterProviders(providers, filters);
+    const q = query.trim().toLowerCase();
+    if (!q) return byFilters;
+    return byFilters.filter((p) => {
+      const name = p.businessName?.toLowerCase() ?? '';
+      const city = (p.cityName ?? p.city?.name ?? '').toLowerCase();
+      const cat = (p.categoryName ?? p.category?.name ?? '').toLowerCase();
+      const addr = (p.addressDetails ?? '').toLowerCase();
+      return (
+        name.includes(q) || city.includes(q) || cat.includes(q) || addr.includes(q)
+      );
+    });
+  }, [providers, filters, query]);
+  const featured = useMemo(() => filtered.slice(0, 8), [filtered]);
+  const topRated = useMemo(
+    () =>
+      [...filtered]
+        .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+        .slice(0, 6),
+    [filtered],
+  );
+
+  const activeCount = countActiveFilters(filters);
+  const chips = activeFilterChips(filters);
 
   const openCategory = (cat: Category) => {
     navigation.push('Category', { categoryId: cat.id, title: cat.name });
@@ -104,18 +165,108 @@ export function CategoryScreen({ route, navigation }: Props) {
 
   const openSearch = () =>
     navigation.navigate('SearchResults', {
-      filters: { categoryId },
+      filters: { categoryId, cityId: filters.cityId },
     });
+
+  const openPromoSlide = (slide: PromoSlide) => {
+    handlePromoSlidePress(slide, {
+      openCategory: (id, title) =>
+        navigation.push('Category', { categoryId: id, title }),
+      openProvider,
+      openService: async (serviceId) => {
+        try {
+          const service = await container.serviceApi.getService(serviceId);
+          if (service.providerId) openProvider(service.providerId);
+          else openSearch();
+        } catch {
+          openSearch();
+        }
+      },
+      fallback: openSearch,
+    });
+  };
+
+  const clearChip = (key: string) => {
+    setFilters((prev) => {
+      const next = { ...prev };
+      if (key === 'price') {
+        delete next.minPrice;
+        delete next.maxPrice;
+      } else if (key === 'city') {
+        delete next.cityId;
+        delete next.cityName;
+      }       else if (key === 'distance') delete next.maxDistanceKm;
+      else if (key === 'rating') delete next.minRating;
+      else if (key === 'rooms') delete next.minRooms;
+      else if (key === 'beds') delete next.minBeds;
+      else if (key === 'bathrooms') delete next.minBathrooms;
+      else if (key === 'capacity') delete next.minCapacity;
+      else if (key === 'players') delete next.minPlayers;
+      else if (key === 'availability') {
+        delete next.availableDate;
+        delete next.availableEndDate;
+        delete next.availableTime;
+        delete next.availablePeriod;
+      }
+      return next;
+    });
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
         <BackButton onPress={() => navigation.goBack()} />
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          {title}
-        </Text>
-        <View style={styles.headerSpacer} />
+        <View style={styles.searchBar}>
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="ابحث عن منشأة.."
+            placeholderTextColor="#9AA6B2"
+            style={styles.searchInput}
+            returnKeyType="search"
+            clearButtonMode="while-editing"
+          />
+          <Ionicons name="search-outline" size={20} color="#6B7280" />
+        </View>
+        <Pressable
+          style={styles.filterBtn}
+          onPress={() => setFilterOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel="تصفية"
+        >
+          <FilterIcon size={20} color="#374151" />
+          {activeCount > 0 ? (
+            <View style={styles.filterBadge}>
+              <Text style={styles.filterBadgeText}>{activeCount}</Text>
+            </View>
+          ) : null}
+        </Pressable>
       </View>
+
+      {chips.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.chipRow}
+        >
+          {chips.map((chip) => (
+            <Pressable
+              key={chip.key}
+              style={styles.chip}
+              onPress={() => clearChip(chip.key)}
+            >
+              <Text style={styles.chipText}>{chip.label}</Text>
+              <Ionicons name="close" size={14} color={theme.colors.primary} />
+            </Pressable>
+          ))}
+          <Pressable
+            style={styles.chipClearAll}
+            onPress={() => setFilters(emptyCategoryFilters())}
+          >
+            <Text style={styles.chipClearAllText}>مسح الكل</Text>
+          </Pressable>
+        </ScrollView>
+      ) : null}
 
       <ScrollView
         contentContainerStyle={styles.scroll}
@@ -131,6 +282,14 @@ export function CategoryScreen({ route, navigation }: Props) {
           />
         }
       >
+        <HeroPromoBanner
+          banners={banners}
+          categoryId={categoryId}
+          categoryName={category?.name ?? titleParam}
+          onPressSlide={openPromoSlide}
+          onExplore={openSearch}
+        />
+
         {subcategories.length > 0 ? (
           <View style={styles.categories}>
             <CategoryScroller
@@ -146,13 +305,18 @@ export function CategoryScreen({ route, navigation }: Props) {
             title="عروض في هذا التصنيف"
             action="عرض الكل"
             onPress={openSearch}
+            count={filtered.length}
           />
           {loading ? (
-            <ActivityIndicator color={theme.colors.primary} style={styles.loader} />
+            <OfferCardSkeletonList count={2} />
           ) : error ? (
             <Text style={styles.empty}>{error}</Text>
           ) : featured.length === 0 ? (
-            <Text style={styles.empty}>لا توجد عروض في هذا التصنيف حالياً</Text>
+            <Text style={styles.empty}>
+              {activeCount > 0
+                ? 'لا توجد نتائج مطابقة للتصفية الحالية'
+                : 'لا توجد عروض في هذا التصنيف حالياً'}
+            </Text>
           ) : (
             featured.map((provider) => {
               const service = cheapestService(provider);
@@ -213,6 +377,16 @@ export function CategoryScreen({ route, navigation }: Props) {
           </View>
         ) : null}
       </ScrollView>
+
+      <CategoryFiltersSheet
+        visible={filterOpen}
+        onClose={() => setFilterOpen(false)}
+        categoryName={title}
+        bookingType={bookingType}
+        cities={cities}
+        initial={filters}
+        onApply={setFilters}
+      />
     </SafeAreaView>
   );
 }
@@ -221,16 +395,21 @@ function SectionHeading({
   title,
   action,
   onPress,
+  count,
 }: {
   title: string;
   action: string;
   onPress: () => void;
+  count?: number;
 }) {
   return (
     <View style={styles.sectionHeading}>
       <View style={styles.headingTitleRow}>
         <View style={styles.headingMarker} />
-        <Text style={styles.sectionTitle}>{title}</Text>
+        <Text style={styles.sectionTitle}>
+          {title}
+          {count != null ? ` (${count})` : ''}
+        </Text>
       </View>
       <Pressable style={styles.viewAll} onPress={onPress}>
         <Text style={styles.viewAllText}>{action}</Text>
@@ -248,19 +427,86 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 10,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
-  headerTitle: {
+  searchBar: {
     flex: 1,
-    fontSize: 18,
-    fontWeight: '800',
-    color: theme.colors.primary,
-    marginHorizontal: 10,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E8EDF5',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    gap: 8,
   },
-  headerSpacer: {
-    width: 40,
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: theme.colors.text,
+    textAlign: 'right',
+    paddingVertical: 0,
+  },
+  filterBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E8EDF5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterBadge: {
+    position: 'absolute',
+    top: -4,
+    left: -4,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: theme.colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  filterBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  chipRow: {
+    paddingHorizontal: 14,
+    paddingBottom: 8,
+    gap: 8,
+    alignItems: 'center',
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: theme.colors.mint,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  chipText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: theme.colors.primary,
+  },
+  chipClearAll: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  chipClearAllText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: theme.colors.accentDark,
   },
   scroll: {
     paddingHorizontal: 14,
@@ -305,9 +551,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: theme.colors.accentDark,
-  },
-  loader: {
-    marginVertical: 24,
   },
   empty: {
     fontSize: 13,

@@ -44,6 +44,9 @@ export class PaymentsService {
       throw new BadRequestException('Booking is not awaiting payment');
     }
 
+    // Customer started paying — stop soft-hold expiry; stay PENDING_PAYMENT until paid.
+    await this.bookings.clearTemporaryLock(booking.id);
+
     const idempotencyKey = dto.idempotencyKey ?? randomUUID();
     const existing = await this.payments.findOne({ where: { idempotencyKey } });
     if (existing) {

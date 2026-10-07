@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, memo } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -31,8 +31,60 @@ import {
   statusIcon,
   statusLabel,
 } from './bookingUi';
+import { syncBookingNotifications } from '../../data/local/notificationStorage';
+import { NotificationBellButton } from '@/core/ui/components/NotificationBellButton';
 
 const WHATSAPP_URL = 'https://wa.me/967700000000';
+
+type BookingCardProps = {
+  item: Booking;
+  formatPrice: (n: number) => string;
+  onPress: (id: string) => void;
+};
+
+const BookingCard = memo(function BookingCard({
+  item,
+  formatPrice,
+  onPress,
+}: BookingCardProps) {
+  const colors = statusColors(item.status);
+  const image = bookingImage(item);
+  const created = formatBookingDate(
+    item.createdAt?.slice(0, 10) ?? item.bookingDate,
+  );
+
+  return (
+    <Pressable style={styles.card} onPress={() => onPress(item.id)}>
+      <View style={styles.cardTop}>
+        {image ? (
+          <Image source={{ uri: image }} style={styles.thumb} />
+        ) : (
+          <View style={[styles.thumb, styles.thumbFallback]}>
+            <Ionicons name="image-outline" size={22} color="#fff" />
+          </View>
+        )}
+        <View style={styles.cardInfo}>
+          <Text style={styles.cardTitle} numberOfLines={1}>
+            {bookingTitle(item)}
+          </Text>
+          <Text style={styles.cardMeta} numberOfLines={1}>
+            #{item.bookingNumber} • {created}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.cardBottom}>
+        <Text style={styles.price}>{formatPrice(item.totalAmount)}</Text>
+        <View style={[styles.badge, { backgroundColor: colors.bg }]}>
+          <Ionicons name={statusIcon(item.status)} size={13} color={colors.text} />
+          <Text style={[styles.badgeText, { color: colors.text }]}>
+            {statusLabel(item.status)}
+          </Text>
+        </View>
+      </View>
+    </Pressable>
+  );
+});
 
 export function BookingHistoryScreen() {
   const { container, user, formatPrice } = useApp();
@@ -50,6 +102,7 @@ export function BookingHistoryScreen() {
     }
     const items = await container.bookingRepository.listMine();
     setBookings(items);
+    await syncBookingNotifications(items).catch(() => undefined);
   }, [container, user]);
 
   useFocusEffect(
@@ -79,6 +132,20 @@ export function BookingHistoryScreen() {
     });
   }, [bookings, filter, query]);
 
+  const openBooking = useCallback(
+    (id: string) => {
+      navigation.navigate('BookingVoucher', { bookingId: id });
+    },
+    [navigation],
+  );
+
+  const renderItem = useCallback(
+    ({ item }: { item: Booking }) => (
+      <BookingCard item={item} formatPrice={formatPrice} onPress={openBooking} />
+    ),
+    [formatPrice, openBooking],
+  );
+
   if (!user) {
     return (
       <LoginGate
@@ -93,9 +160,10 @@ export function BookingHistoryScreen() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>حجوزاتي</Text>
         <View style={styles.headerActions}>
-          <Pressable style={styles.iconBtn}>
-            <Ionicons name="notifications-outline" size={20} color={theme.colors.primary} />
-          </Pressable>
+          <NotificationBellButton
+            onPress={() => navigation.navigate('Notifications')}
+            style={styles.iconBtn}
+          />
           <Pressable style={styles.iconBtn} onPress={() => Linking.openURL(WHATSAPP_URL)}>
             <Ionicons name="logo-whatsapp" size={20} color="#25D366" />
           </Pressable>
@@ -144,6 +212,10 @@ export function BookingHistoryScreen() {
           data={filtered}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
+          initialNumToRender={6}
+          windowSize={7}
+          maxToRenderPerBatch={6}
+          removeClippedSubviews
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -158,47 +230,7 @@ export function BookingHistoryScreen() {
           ListEmptyComponent={
             <Text style={styles.empty}>لا توجد حجوزات مطابقة.</Text>
           }
-          renderItem={({ item }) => {
-            const colors = statusColors(item.status);
-            const image = bookingImage(item);
-            const created = formatBookingDate(item.createdAt?.slice(0, 10) ?? item.bookingDate);
-            return (
-              <Pressable
-                style={styles.card}
-                onPress={() =>
-                  navigation.navigate('BookingVoucher', { bookingId: item.id })
-                }
-              >
-                <View style={styles.cardTop}>
-                  {image ? (
-                    <Image source={{ uri: image }} style={styles.thumb} />
-                  ) : (
-                    <View style={[styles.thumb, styles.thumbFallback]}>
-                      <Ionicons name="image-outline" size={22} color="#fff" />
-                    </View>
-                  )}
-                  <View style={styles.cardInfo}>
-                    <Text style={styles.cardTitle} numberOfLines={1}>
-                      {bookingTitle(item)}
-                    </Text>
-                    <Text style={styles.cardMeta} numberOfLines={1}>
-                      #{item.bookingNumber} • {created}
-                    </Text>
-                  </View>
-                </View>
-
-                <View style={styles.cardBottom}>
-                  <Text style={styles.price}>{formatPrice(item.totalAmount)}</Text>
-                  <View style={[styles.badge, { backgroundColor: colors.bg }]}>
-                    <Ionicons name={statusIcon(item.status)} size={13} color={colors.text} />
-                    <Text style={[styles.badgeText, { color: colors.text }]}>
-                      {statusLabel(item.status)}
-                    </Text>
-                  </View>
-                </View>
-              </Pressable>
-            );
-          }}
+          renderItem={renderItem}
         />
       )}
     </SafeAreaView>

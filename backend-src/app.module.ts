@@ -7,6 +7,7 @@ import databaseConfig from './config/database.config';
 import jwtConfig from './config/jwt.config';
 import paymentConfig from './config/payment.config';
 import redisConfig from './config/redis.config';
+import cloudinaryConfig from './config/cloudinary.config';
 import { AuthGuard } from './common/guards/auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -25,12 +26,14 @@ import { ReviewsModule } from './modules/reviews/reviews.module';
 import { DisputesModule } from './modules/disputes/disputes.module';
 import { JobsModule } from './jobs/jobs.module';
 import { HealthModule } from './modules/health/health.module';
+import { UploadsModule } from './modules/uploads/uploads.module';
+import { AdminModule } from './modules/admin/admin.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [databaseConfig, jwtConfig, paymentConfig, redisConfig],
+      load: [databaseConfig, jwtConfig, paymentConfig, redisConfig, cloudinaryConfig],
     }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
@@ -51,6 +54,8 @@ import { HealthModule } from './modules/health/health.module';
     DisputesModule,
     JobsModule,
     HealthModule,
+    UploadsModule,
+    AdminModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: AuthGuard },

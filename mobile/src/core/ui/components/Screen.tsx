@@ -1,22 +1,30 @@
 import { ReactNode } from 'react';
-import { ScrollView, StyleSheet, View, ViewStyle } from 'react-native';
+import { StyleSheet, View, ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '../theme';
+import { KeyboardAwareScrollView } from './KeyboardAwareScrollView';
 
 interface ScreenProps {
   children: ReactNode;
   scroll?: boolean;
   style?: ViewStyle;
+  /** Extra space below focused field when keyboard is open. */
+  keyboardBottomOffset?: number;
 }
 
-export function Screen({ children, scroll = false, style }: ScreenProps) {
+export function Screen({
+  children,
+  scroll = false,
+  style,
+  keyboardBottomOffset = 24,
+}: ScreenProps) {
   const content = scroll ? (
-    <ScrollView
+    <KeyboardAwareScrollView
       contentContainerStyle={[styles.content, style]}
-      keyboardShouldPersistTaps="handled"
+      bottomOffset={keyboardBottomOffset}
     >
       {children}
-    </ScrollView>
+    </KeyboardAwareScrollView>
   ) : (
     <View style={[styles.content, style]}>{children}</View>
   );

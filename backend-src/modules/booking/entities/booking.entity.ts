@@ -42,6 +42,10 @@ export class Booking {
   @Column({ name: 'booking_date', type: 'date' })
   bookingDate: string;
 
+  /** Exclusive check-out date for multi-night stays (null = single day). */
+  @Column({ name: 'check_out_date', type: 'date', nullable: true })
+  checkOutDate: string | null;
+
   @Column({ name: 'start_time', type: 'time', nullable: true })
   startTime: string | null;
 

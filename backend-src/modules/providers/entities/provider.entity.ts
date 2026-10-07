@@ -5,7 +5,6 @@ import {
   JoinColumn,
   ManyToOne,
   OneToMany,
-  OneToOne,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -24,7 +23,7 @@ export class Provider {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'user_id', unique: true })
+  @Column({ name: 'user_id' })
   userId: string;
 
   @Column({ name: 'business_name', length: 150 })
@@ -69,6 +68,9 @@ export class Provider {
   @Column({ name: 'cancellation_policy', type: 'text', nullable: true })
   cancellationPolicy: string | null;
 
+  @Column({ type: 'jsonb', default: {} })
+  attributes: Record<string, unknown>;
+
   @Column({
     type: 'enum',
     enum: ProviderStatus,
@@ -83,7 +85,7 @@ export class Provider {
   @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
   updatedAt: Date;
 
-  @OneToOne(() => User, (user) => user.provider, { onDelete: 'CASCADE' })
+  @ManyToOne(() => User, (user) => user.providers, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user?: User;
 

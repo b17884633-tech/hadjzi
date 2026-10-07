@@ -20,18 +20,23 @@ export class DisputesService {
   ) {}
 
   async create(user: User, dto: CreateDisputeDto) {
-    const booking = await this.bookings.findOneForUser(user, dto.bookingId);
-    const open = await this.disputes.findOne({
-      where: { bookingId: booking.id, status: DisputeStatus.OPEN },
-    });
-    if (open) {
-      throw new BadRequestException('An open dispute already exists');
+    let bookingId: string | null = null;
+    if (dto.bookingId) {
+      const booking = await this.bookings.findOneForUser(user, dto.bookingId);
+      bookingId = booking.id;
+      const open = await this.disputes.findOne({
+        where: { bookingId: booking.id, status: DisputeStatus.OPEN },
+      });
+      if (open) {
+        throw new BadRequestException('An open dispute already exists');
+      }
     }
+
     return this.disputes.save(
       this.disputes.create({
-        bookingId: booking.id,
+        bookingId,
         raisedBy: user.id,
-        reason: dto.reason,
+        reason: dto.reason.trim(),
         status: DisputeStatus.OPEN,
       }),
     );

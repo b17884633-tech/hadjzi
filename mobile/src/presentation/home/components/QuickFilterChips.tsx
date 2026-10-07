@@ -1,4 +1,4 @@
-import { FlatList, Pressable, StyleSheet } from 'react-native';
+import { Pressable, ScrollView, StyleSheet } from 'react-native';
 import { AppText as Text } from '@/core/ui/components/AppText';
 import { theme } from '../../../core/ui/theme';
 
@@ -12,18 +12,21 @@ export function QuickFilterChips({
   if (!labels.length) return null;
 
   return (
-    <FlatList
+    <ScrollView
       horizontal
-      data={labels}
-      keyExtractor={(item) => item}
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={styles.list}
-      renderItem={({ item }) => (
-        <Pressable style={styles.chip} onPress={() => onSelect?.(item)}>
+    >
+      {labels.map((item) => (
+        <Pressable
+          key={item}
+          style={styles.chip}
+          onPress={() => onSelect?.(item)}
+        >
           <Text style={styles.chipText}>{item}</Text>
         </Pressable>
-      )}
-    />
+      ))}
+    </ScrollView>
   );
 }
 

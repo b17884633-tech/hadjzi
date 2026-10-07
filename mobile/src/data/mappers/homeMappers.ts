@@ -19,7 +19,11 @@ type ApiProvider = {
   description?: string | null;
   images?: string[];
   addressDetails?: string | null;
+  cancellationPolicy?: string | null;
+  attributes?: Record<string, unknown>;
   categoryId?: number | null;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
   city?: { id: number; name: string } | null;
   region?: { id: number; name: string } | null;
   category?: {
@@ -58,6 +62,8 @@ export function mapApiProvider(raw: ApiProvider): Provider {
     images: raw.images ?? [],
     logoUrl: raw.images?.[0],
     addressDetails: raw.addressDetails ?? undefined,
+    cancellationPolicy: raw.cancellationPolicy ?? null,
+    attributes: raw.attributes ?? {},
     cityName: raw.city?.name,
     regionName: raw.region?.name,
     categoryName: raw.category?.name,
@@ -71,8 +77,11 @@ export function mapApiProvider(raw: ApiProvider): Provider {
       bookingType: raw.category?.bookingType,
     })),
     verified: true,
-    rating: 4.5 + ((raw.id.charCodeAt(0) ?? 0) % 5) / 10,
-    reviewCount: 40 + ((raw.id.charCodeAt(1) ?? 0) % 120),
+    /** Filled from reviews API on the detail page; list cards may stay unset. */
+    rating: undefined,
+    reviewCount: 0,
+    latitude: toNumber(raw.latitude) ?? null,
+    longitude: toNumber(raw.longitude) ?? null,
   };
 }
 

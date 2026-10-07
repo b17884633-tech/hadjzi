@@ -14,6 +14,12 @@ import { BookingCheckoutScreen } from '../booking/BookingCheckoutScreen';
 import { PaymentWebviewScreen } from '../booking/checkout/PaymentWebviewScreen';
 import { BookingVoucherScreen } from '../my_bookings/BookingVoucherScreen';
 import { FavoritesScreen } from '../account/FavoritesScreen';
+import { NotificationsScreen } from '../account/NotificationsScreen';
+import { ProviderHomeScreen } from '../provider/ProviderHomeScreen';
+import { ProviderFacilityScreen } from '../provider/ProviderFacilityScreen';
+import { ProviderFacilityFormScreen } from '../provider/ProviderFacilityFormScreen';
+import { ProviderServiceFormScreen } from '../provider/ProviderServiceFormScreen';
+import { ProviderDeskBookingScreen } from '../provider/ProviderDeskBookingScreen';
 import { BackButton } from '../../core/ui/components/BackButton';
 import { theme } from '../../core/ui/theme';
 import { CAIRO } from '../../core/ui/theme/fonts';
@@ -103,6 +109,36 @@ export function RootNavigator() {
       <Stack.Screen
         name="Favorites"
         component={FavoritesScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="Notifications"
+        component={NotificationsScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="ProviderHome"
+        component={ProviderHomeScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="ProviderFacility"
+        component={ProviderFacilityScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="ProviderFacilityForm"
+        component={ProviderFacilityFormScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="ProviderServiceForm"
+        component={ProviderServiceFormScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="ProviderDeskBooking"
+        component={ProviderDeskBookingScreen}
         options={{ headerShown: false }}
       />
     </Stack.Navigator>

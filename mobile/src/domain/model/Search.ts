@@ -31,5 +31,6 @@ export interface SearchFilters {
   regionId?: number;
   categoryId?: number;
   date?: string;
+  endDate?: string;
   time?: string;
 }

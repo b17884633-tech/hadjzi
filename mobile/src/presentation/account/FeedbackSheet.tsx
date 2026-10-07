@@ -26,6 +26,7 @@ export function FeedbackSheet({ visible, onClose, onSubmit }: Props) {
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const canSend = message.trim().length >= 3 && !sending;
 
@@ -33,17 +34,37 @@ export function FeedbackSheet({ visible, onClose, onSubmit }: Props) {
     setMessage('');
     setSent(false);
     setSending(false);
+    setError(null);
     onClose();
   };
 
   const handleSend = async () => {
     if (!canSend) return;
     setSending(true);
+    setError(null);
     try {
       await onSubmit?.(message.trim());
       setSent(true);
       setTimeout(handleClose, 900);
-    } catch {
+    } catch (e: unknown) {
+      const axiosMsg =
+        typeof e === 'object' &&
+        e &&
+        'response' in e &&
+        typeof (e as { response?: { data?: { message?: unknown } } }).response?.data
+          ?.message !== 'undefined'
+          ? (e as { response: { data: { message: string | string[] } } }).response.data
+              .message
+          : null;
+      setError(
+        Array.isArray(axiosMsg)
+          ? axiosMsg.join('، ')
+          : typeof axiosMsg === 'string'
+            ? axiosMsg
+            : e instanceof Error
+              ? e.message
+              : 'تعذر إرسال الرسالة. حاول مرة أخرى.',
+      );
       setSending(false);
     }
   };
@@ -77,6 +98,8 @@ export function FeedbackSheet({ visible, onClose, onSubmit }: Props) {
               textAlign="right"
               textAlignVertical="top"
             />
+
+            {error ? <Text style={styles.error}>{error}</Text> : null}
 
             <Pressable disabled={!canSend} onPress={handleSend}>
               <LinearGradient
@@ -159,5 +182,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: theme.colors.primary,
+  },
+  error: {
+    color: theme.colors.error,
+    textAlign: 'center',
+    fontSize: 13,
+    marginBottom: 12,
   },
 });

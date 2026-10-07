@@ -132,14 +132,15 @@ CREATE TABLE providers (
     longitude DECIMAL(11, 8),
     images TEXT[] DEFAULT '{}'::TEXT[] NOT NULL,
     cancellation_policy TEXT,
+    attributes JSONB DEFAULT '{}'::jsonb NOT NULL,
     status provider_status DEFAULT 'PENDING_REVIEW' NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
-    CONSTRAINT providers_user_unique UNIQUE (user_id),
     CONSTRAINT providers_lat_range CHECK (latitude IS NULL OR (latitude >= -90 AND latitude <= 90)),
     CONSTRAINT providers_lng_range CHECK (longitude IS NULL OR (longitude >= -180 AND longitude <= 180))
 );
 
+CREATE INDEX idx_providers_user_id ON providers (user_id);
 CREATE INDEX idx_providers_category_id ON providers (category_id);
 CREATE INDEX idx_providers_city_id ON providers (city_id);
 CREATE INDEX idx_providers_region_id ON providers (region_id);

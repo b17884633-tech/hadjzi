@@ -16,8 +16,8 @@ export class Dispute {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column({ name: 'booking_id' })
-  bookingId: string;
+  @Column({ name: 'booking_id', type: 'uuid', nullable: true })
+  bookingId: string | null;
 
   @Column({ name: 'raised_by', type: 'uuid', nullable: true })
   raisedBy: string | null;

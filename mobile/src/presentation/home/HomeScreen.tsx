@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -8,6 +7,7 @@ import {
   View,
 } from 'react-native';
 import { AppText as Text } from '@/core/ui/components/AppText';
+import { OfferCardSkeletonList } from '@/core/ui/components/Skeleton';
 import { Ionicons } from '@expo/vector-icons';
 import { CompositeNavigationProp, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -26,14 +26,17 @@ import {
   MainTabParamList,
   RootStackParamList,
 } from '../navigation/types';
+import { addDaysIso, toIsoDate } from '../booking/bookingFlow';
 import { HomeHeader } from './components/HomeHeader';
-import { HeroPromoBanner } from './components/HeroPromoBanner';
-import { HomeSearchBar } from './components/HomeSearchBar';
+import { HeroPromoBanner, PromoSlide } from './components/HeroPromoBanner';
+import { HomeSearchBar, HomeWhenFilter } from './components/HomeSearchBar';
+import { WhenPickerSheet } from './components/WhenPickerSheet';
 import { CategoryScroller } from './components/CategoryScroller';
 import { FeaturedOfferCard } from './components/FeaturedOfferCard';
 import { TopRatedCard } from './components/TopRatedCard';
 import { TrustBanner } from './components/TrustBanner';
 import { CityPickerSheet } from './components/CityPickerSheet';
+import { handlePromoSlidePress } from './bannerNavigation';
 
 const FALLBACK_CITIES: Destination[] = [
   { id: 1, name: 'صنعاء' },
@@ -67,6 +70,35 @@ function shortCategoryLabel(name?: string | null): string {
   return name.slice(0, 10);
 }
 
+function isoForWhen(when: HomeWhenFilter, customDate?: string): string | undefined {
+  if (when === 'any') return undefined;
+  if (when === 'custom') return customDate;
+  const now = new Date();
+  const today = toIsoDate(now.getFullYear(), now.getMonth(), now.getDate());
+  return when === 'today' ? today : addDaysIso(today, 1);
+}
+
+function matchesQuery(provider: Provider, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const hay = [
+    provider.businessName,
+    provider.description,
+    provider.cityName,
+    provider.city?.name,
+    provider.regionName,
+    provider.region?.name,
+    provider.addressDetails,
+    provider.categoryName,
+    provider.category?.name,
+    ...(provider.services?.map((s) => s.name) ?? []),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return hay.includes(q);
+}
+
 export function HomeScreen() {
   const { container, user } = useApp();
   const navigation =
@@ -80,23 +112,21 @@ export function HomeScreen() {
       >
     >();
 
+  const scrollRef = useRef<ScrollView>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [banners, setBanners] = useState<Banner[]>([]);
   const [cities, setCities] = useState<Destination[]>(FALLBACK_CITIES);
   const [selectedCity, setSelectedCity] = useState<Destination>(FALLBACK_CITIES[0]);
   const [citySheetOpen, setCitySheetOpen] = useState(false);
+  const [whenSheetOpen, setWhenSheetOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [whenFilter, setWhenFilter] = useState<HomeWhenFilter>('any');
+  const [customDate, setCustomDate] = useState<string | undefined>();
+  const [searchActive, setSearchActive] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const openSearch = (filters?: { categoryId?: number; cityId?: number }) =>
-    navigation.navigate('SearchResults', {
-      filters: {
-        cityId: filters?.cityId ?? selectedCity.id,
-        categoryId: filters?.categoryId,
-      },
-    });
 
   const openProvider = (providerId: string) =>
     navigation.navigate('ProviderProfile', { providerId });
@@ -105,14 +135,22 @@ export function HomeScreen() {
     navigation.navigate('Account');
   };
 
+  const openNotifications = () => {
+    navigation.navigate('Notifications');
+  };
+
   const load = useCallback(
-    async (cityId?: number) => {
+    async (cityId?: number, date?: string) => {
       setError(null);
       const activeCityId = cityId ?? selectedCity.id;
+      const activeDate = date ?? isoForWhen(whenFilter, customDate);
       try {
         const [categoryRes, searchRes, bannerRes, destinations] = await Promise.all([
           container.categoryApi.tree(),
-          container.searchRepository.search({ cityId: activeCityId }),
+          container.searchRepository.search({
+            cityId: activeCityId,
+            date: activeDate,
+          }),
           container.bannerApi
             .listActive()
             .catch(() => ({ data: { data: [] as Banner[] } })),
@@ -135,7 +173,7 @@ export function HomeScreen() {
         setRefreshing(false);
       }
     },
-    [container, selectedCity.id],
+    [container, selectedCity.id, whenFilter, customDate],
   );
 
   useEffect(() => {
@@ -161,31 +199,91 @@ export function HomeScreen() {
     async (city: Destination) => {
       setSelectedCity(city);
       await saveSelectedCity({ id: city.id, name: city.name });
+      setCitySheetOpen(false);
       setLoading(true);
       await load(city.id);
     },
     [load],
   );
 
+  const handleSelectWhen = useCallback(
+    async (when: HomeWhenFilter, date?: string) => {
+      setWhenFilter(when);
+      setCustomDate(when === 'custom' ? date : undefined);
+      setSearchActive(true);
+      setLoading(true);
+      await load(selectedCity.id, isoForWhen(when, date));
+    },
+    [load, selectedCity.id],
+  );
+
+  const filteredProviders = useMemo(
+    () => providers.filter((p) => matchesQuery(p, searchQuery)),
+    [providers, searchQuery],
+  );
+
+  const hasSearch =
+    searchActive ||
+    searchQuery.trim().length > 0 ||
+    whenFilter !== 'any';
+
   const displayCategories = useMemo(
     () => rootCategories(categories),
     [categories],
   );
 
-  const featured = useMemo(() => providers.slice(0, 6), [providers]);
+  const featured = useMemo(() => {
+    const source = hasSearch ? filteredProviders : providers;
+    return source.slice(0, hasSearch ? 20 : 6);
+  }, [providers, filteredProviders, hasSearch]);
+
   const topRated = useMemo(() => {
+    if (hasSearch) return [];
     const rest = providers.slice(0, 10);
     return rest.length > 3 ? rest.slice(0, 8) : rest;
-  }, [providers]);
+  }, [providers, hasSearch]);
 
-  const heroBanner = banners[0];
+  const runSearch = () => {
+    setSearchActive(true);
+    scrollRef.current?.scrollTo({ y: 280, animated: true });
+  };
+
+  const openPromoSlide = (slide: PromoSlide) => {
+    handlePromoSlidePress(slide, {
+      openCategory: (categoryId, title) =>
+        navigation.navigate('Category', { categoryId, title }),
+      openProvider,
+      openService: async (serviceId) => {
+        try {
+          const service = await container.serviceApi.getService(serviceId);
+          if (service.providerId) openProvider(service.providerId);
+          else runSearch();
+        } catch {
+          runSearch();
+        }
+      },
+      fallback: runSearch,
+    });
+  };
+
+  const clearSearch = () => {
+    setSearchQuery('');
+    setSearchActive(false);
+    setWhenFilter('any');
+    setCustomDate(undefined);
+    setLoading(true);
+    load(selectedCity.id, undefined).catch(() => undefined);
+  };
+
   const userDisplayName = [user?.firstName, user?.lastName].filter(Boolean).join(' ');
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -202,9 +300,26 @@ export function HomeScreen() {
           userName={userDisplayName || null}
           onCityPress={() => setCitySheetOpen(true)}
           onProfilePress={openAccount}
+          onNotificationsPress={openNotifications}
         />
-        <HeroPromoBanner banner={heroBanner} onExplore={() => openSearch()} />
-        <HomeSearchBar onSearchPress={() => openSearch()} />
+        <HeroPromoBanner
+          banners={banners}
+          onPressSlide={openPromoSlide}
+          onExplore={runSearch}
+        />
+        <HomeSearchBar
+          query={searchQuery}
+          onQueryChange={(v) => {
+            setSearchQuery(v);
+            if (v.trim()) setSearchActive(true);
+          }}
+          cityName={selectedCity.name}
+          when={whenFilter}
+          customDate={customDate}
+          onCityPress={() => setCitySheetOpen(true)}
+          onWhenPress={() => setWhenSheetOpen(true)}
+          onSearch={runSearch}
+        />
 
         <View style={styles.categories}>
           <CategoryScroller
@@ -220,16 +335,20 @@ export function HomeScreen() {
 
         <View style={styles.section}>
           <SectionHeading
-            title="عروض حصرية مميزة"
-            action="عرض الكل"
-            onPress={() => openSearch()}
+            title={hasSearch ? 'نتائج البحث' : 'عروض حصرية مميزة'}
+            action={hasSearch ? 'مسح البحث' : 'عرض الكل'}
+            onPress={hasSearch ? clearSearch : runSearch}
           />
           {loading ? (
-            <ActivityIndicator color={theme.colors.primary} style={styles.loader} />
+            <OfferCardSkeletonList count={2} />
           ) : error ? (
             <Text style={styles.empty}>{error}</Text>
           ) : featured.length === 0 ? (
-            <Text style={styles.empty}>لا توجد عروض حالياً — جرّب التحديث لاحقاً</Text>
+            <Text style={styles.empty}>
+              {hasSearch
+                ? 'لا توجد نتائج مطابقة — جرّب كلمات أو مدينة أخرى'
+                : 'لا توجد عروض حالياً — جرّب التحديث لاحقاً'}
+            </Text>
           ) : (
             featured.map((provider) => {
               const service = cheapestService(provider);
@@ -258,40 +377,44 @@ export function HomeScreen() {
           )}
         </View>
 
-        <View style={styles.section}>
-          <SectionHeading
-            title="الأعلى تقييماً بالقرب منك"
-            action="عرض الكل"
-            onPress={() => openSearch()}
-          />
-          {!loading && topRated.length === 0 ? (
-            <Text style={styles.empty}>لا توجد نتائج قريبة حالياً</Text>
-          ) : (
-            topRated.map((provider) => {
-              const service = cheapestService(provider);
-              const price = service?.priceFrom ?? service?.basePrice;
-              const categoryName = provider.categoryName ?? provider.category?.name;
-              return (
-                <TopRatedCard
-                  key={`top-${provider.id}`}
-                  title={provider.businessName}
-                  subtitle={
-                    provider.description?.split(/[.،]/)[0]?.trim() ||
-                    categoryName ||
-                    provider.cityName
-                  }
-                  rating={provider.rating ?? 4.7}
-                  price={price}
-                  depositPercentage={30}
-                  categoryLabel={shortCategoryLabel(categoryName)}
-                  verified={provider.verified !== false}
-                  image={imageFromProvider(provider)}
-                  onPress={() => openProvider(provider.id)}
-                />
-              );
-            })
-          )}
-        </View>
+        {!hasSearch ? (
+          <View style={styles.section}>
+            <SectionHeading
+              title="الأعلى تقييماً بالقرب منك"
+              action="عرض الكل"
+              onPress={runSearch}
+            />
+            {loading ? (
+              <OfferCardSkeletonList count={2} />
+            ) : topRated.length === 0 ? (
+              <Text style={styles.empty}>لا توجد نتائج قريبة حالياً</Text>
+            ) : (
+              topRated.map((provider) => {
+                const service = cheapestService(provider);
+                const price = service?.priceFrom ?? service?.basePrice;
+                const categoryName = provider.categoryName ?? provider.category?.name;
+                return (
+                  <TopRatedCard
+                    key={`top-${provider.id}`}
+                    title={provider.businessName}
+                    subtitle={
+                      provider.description?.split(/[.،]/)[0]?.trim() ||
+                      categoryName ||
+                      provider.cityName
+                    }
+                    rating={provider.rating ?? 4.7}
+                    price={price}
+                    depositPercentage={30}
+                    categoryLabel={shortCategoryLabel(categoryName)}
+                    verified={provider.verified !== false}
+                    image={imageFromProvider(provider)}
+                    onPress={() => openProvider(provider.id)}
+                  />
+                );
+              })
+            )}
+          </View>
+        ) : null}
 
         <TrustBanner />
       </ScrollView>
@@ -302,6 +425,13 @@ export function HomeScreen() {
         selectedCityId={selectedCity.id}
         onClose={() => setCitySheetOpen(false)}
         onSelect={handleSelectCity}
+      />
+      <WhenPickerSheet
+        visible={whenSheetOpen}
+        selected={whenFilter}
+        customDate={customDate}
+        onClose={() => setWhenSheetOpen(false)}
+        onSelect={handleSelectWhen}
       />
     </SafeAreaView>
   );
@@ -337,7 +467,7 @@ const styles = StyleSheet.create({
   },
   scroll: {
     paddingHorizontal: 14,
-    paddingBottom: 0,
+    paddingBottom: 120,
   },
   categories: {
     marginTop: 4,
@@ -380,9 +510,6 @@ const styles = StyleSheet.create({
     ...theme.typography.caption,
     color: theme.colors.accentDark,
     textAlign: 'right',
-  },
-  loader: {
-    marginVertical: theme.spacing.md,
   },
   empty: {
     ...theme.typography.bodySmall,

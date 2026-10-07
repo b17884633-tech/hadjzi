@@ -1,5 +1,5 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { SearchResultsScreen } from '../search/SearchResultsScreen';
+import { SearchScreen } from '../search/SearchScreen';
 import { BookingHistoryScreen } from '../my_bookings/BookingHistoryScreen';
 import { AccountScreen } from '../account/AccountScreen';
 import { MainTabParamList } from './types';
@@ -34,7 +34,7 @@ export function MainNavigator() {
       }}
     >
       <Tab.Screen name="Home" component={HomeNavigator} options={{ title: 'المنشآت' }} />
-      <Tab.Screen name="Explore" component={SearchResultsScreen} options={{ title: 'البحث' }} />
+      <Tab.Screen name="Explore" component={SearchScreen} options={{ title: 'البحث' }} />
       <Tab.Screen
         name="MyBookings"
         component={BookingHistoryScreen}
