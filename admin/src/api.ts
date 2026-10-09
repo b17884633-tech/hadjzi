@@ -16,7 +16,7 @@ import type {
 } from './types';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '')
-  || 'http://localhost:3000/api';
+  || 'https://hadjzi.onrender.com/api';
 
 type Envelope<T> = {
   success: boolean;
