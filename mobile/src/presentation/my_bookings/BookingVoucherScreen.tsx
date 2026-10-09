@@ -19,6 +19,7 @@ import { useApp } from '../../di/AppProvider';
 import { Booking } from '../../domain/model/Booking';
 import { RootStackParamList } from '../navigation/types';
 import { BookingInvoiceSheet } from './BookingInvoiceSheet';
+import { WriteReviewSheet } from './WriteReviewSheet';
 import { notifyBookingStatus } from '../../data/local/notificationStorage';
 import {
   bookingImage,
@@ -44,6 +45,7 @@ export function BookingVoucherScreen() {
   const [booking, setBooking] = useState<Booking | null>(null);
   const [loading, setLoading] = useState(true);
   const [invoiceOpen, setInvoiceOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [acting, setActing] = useState(false);
 
   const reload = () => {
@@ -153,7 +155,14 @@ export function BookingVoucherScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingBottom: 110 + insets.bottom }]}
+        contentContainerStyle={[
+          styles.scroll,
+          {
+            paddingBottom:
+              (booking.status === 'COMPLETED' && !isProviderView ? 170 : 110) +
+              insets.bottom,
+          },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         <Pressable
@@ -313,12 +322,37 @@ export function BookingVoucherScreen() {
             ) : null}
           </View>
         </View>
-      ) : booking.providerId ? (
-        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-          <Pressable style={styles.providerBtn} onPress={openProvider}>
-            <Ionicons name="business-outline" size={18} color={theme.colors.primary} />
-            <Text style={styles.providerBtnText}>استعراض تفاصيل المنشأة</Text>
-          </Pressable>
+      ) : booking.providerId || booking.status === 'COMPLETED' ? (
+        <View
+          style={[
+            styles.footer,
+            styles.footerStack,
+            { paddingBottom: Math.max(insets.bottom, 12) },
+          ]}
+        >
+          {booking.status === 'COMPLETED' && !booking.reviewId ? (
+            <Pressable
+              style={[styles.providerBtn, styles.reviewBtn]}
+              onPress={() => setReviewOpen(true)}
+            >
+              <Ionicons name="star" size={18} color="#E8B923" />
+              <Text style={[styles.providerBtnText, styles.reviewBtnText]}>
+                قيّم المنشأة
+              </Text>
+            </Pressable>
+          ) : null}
+          {booking.status === 'COMPLETED' && booking.reviewId ? (
+            <View style={styles.reviewedBanner}>
+              <Ionicons name="checkmark-circle" size={18} color={theme.colors.success} />
+              <Text style={styles.reviewedText}>شكراً — تم إرسال تقييمك</Text>
+            </View>
+          ) : null}
+          {booking.providerId ? (
+            <Pressable style={styles.providerBtn} onPress={openProvider}>
+              <Ionicons name="business-outline" size={18} color={theme.colors.primary} />
+              <Text style={styles.providerBtnText}>استعراض تفاصيل المنشأة</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
 
@@ -327,6 +361,23 @@ export function BookingVoucherScreen() {
         booking={booking}
         user={user}
         onClose={() => setInvoiceOpen(false)}
+      />
+
+      <WriteReviewSheet
+        visible={reviewOpen}
+        facilityName={booking.provider?.businessName}
+        onClose={() => setReviewOpen(false)}
+        onSubmit={async ({ rating, comment }) => {
+          await container.reviewApi.create({
+            bookingId: booking.id,
+            rating,
+            comment: comment || undefined,
+          });
+          setBooking((prev) =>
+            prev ? { ...prev, reviewId: prev.reviewId ?? 'local' } : prev,
+          );
+          reload();
+        }}
       />
     </SafeAreaView>
   );
@@ -535,6 +586,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 10,
   },
+  footerStack: { gap: 8 },
   providerBtn: {
     height: 52,
     borderRadius: 16,
@@ -548,6 +600,28 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     color: theme.colors.primary,
+  },
+  reviewBtn: {
+    backgroundColor: '#FFF8E6',
+    borderWidth: 1,
+    borderColor: '#F0D78C',
+  },
+  reviewBtnText: {
+    color: theme.colors.primary,
+  },
+  reviewedBanner: {
+    height: 48,
+    borderRadius: 16,
+    backgroundColor: '#ECFDF5',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  reviewedText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: theme.colors.success,
   },
   providerActions: {
     flexDirection: 'row',

@@ -1,6 +1,7 @@
 import {
   ArrayMaxSize,
   IsArray,
+  IsIn,
   IsInt,
   IsNumber,
   IsObject,
@@ -112,6 +113,55 @@ export class CreateAvailabilityDto {
   @IsNumber()
   @Min(0)
   customPrice?: number;
+
+  /** AVAILABLE (default) or BLOCKED for provider-closed periods. */
+  @IsOptional()
+  @IsIn(['AVAILABLE', 'BLOCKED'])
+  status?: 'AVAILABLE' | 'BLOCKED';
+}
+
+export class UpdateAvailabilityStatusDto {
+  @IsIn(['AVAILABLE', 'BLOCKED'])
+  status: 'AVAILABLE' | 'BLOCKED';
+}
+
+/** Seed hourly slots for fields / clinics (e.g. 08:00–22:00). */
+export class SeedHourlyAvailabilityDto {
+  @IsOptional()
+  @IsString()
+  fromDate?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(60)
+  days?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(23)
+  startHour?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(24)
+  endHour?: number;
+
+  /** Explicit hour starts (0–23). When set, overrides startHour/endHour. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(24)
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  @Max(23, { each: true })
+  hours?: number[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  totalCapacity?: number;
 }
 
 /** Open bookable all-day slots for a date range (hotels/chalets). */

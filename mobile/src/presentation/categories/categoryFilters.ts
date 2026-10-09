@@ -85,7 +85,7 @@ export function resolveCategoryFilterProfile(
         periodOptions: flow.periodOptions,
       };
     case 'SLOT_DURATION':
-      if (/ملعب/i.test(categoryName ?? '')) {
+      if (/ملاعب|ملعب/i.test(categoryName ?? '')) {
         return {
           kind: flow.kind,
           fields: [...base, 'players'],

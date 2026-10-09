@@ -19,6 +19,13 @@ import {
   readServicePrices,
   type ServicePrices,
 } from '../../core/common/currency';
+import {
+  defaultSportPricePeriods,
+  hoursCoveredByPeriods,
+  parsePricePeriods,
+  periodLabelForIndex,
+  type PricePeriod,
+} from '../../core/common/pricePeriods';
 import { theme } from '../../core/ui/theme';
 import { useApp } from '../../di/AppProvider';
 import { RootStackParamList } from '../navigation/types';
@@ -56,8 +63,23 @@ function isHotelCategory(name?: string | null) {
   return /فنادق|فندق|hotel/i.test(name ?? '');
 }
 
+function isTairamanCategory(name?: string | null) {
+  return /طيرمان|طرمان|tairaman/i.test(name ?? '');
+}
+
+/** Same package form as chalets. */
 function isChaletCategory(name?: string | null) {
-  return /شالي|chalet/i.test(name ?? '');
+  return /شالي|chalet/i.test(name ?? '') || isTairamanCategory(name);
+}
+
+function isHallCategory(name?: string | null) {
+  return /صالة|قاعة|صالات|قاعات|hall|wedding|زفاف/i.test(name ?? '');
+}
+
+function isSportCategory(name?: string | null) {
+  return /ملاعب|ملعب|مسبح|نادي|كرة|بادل|رياض|padel|football|sport/i.test(
+    name ?? '',
+  );
 }
 
 function toOptionalNum(v: unknown): number | undefined {
@@ -108,35 +130,64 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
   const [saving, setSaving] = useState(false);
   const [isHotel, setIsHotel] = useState(false);
   const [isChalet, setIsChalet] = useState(false);
+  const [isTairaman, setIsTairaman] = useState(false);
+  const [isHall, setIsHall] = useState(false);
+  const [isSport, setIsSport] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [basePrice, setBasePrice] = useState('');
   const [prices, setPrices] = useState<Record<CurrencyCode, string>>(emptyPriceInputs);
   const [capacity, setCapacity] = useState<number | undefined>();
+  const [maxChildren, setMaxChildren] = useState<number | undefined>();
   const [beds, setBeds] = useState<number | undefined>();
   const [period, setPeriod] = useState<PackagePeriod>('PER_NIGHT');
   const [fromTime, setFromTime] = useState(DEFAULT_PERIOD_TIMES.MORNING.from);
   const [toTime, setToTime] = useState(DEFAULT_PERIOD_TIMES.MORNING.to);
+  const [pricePeriods, setPricePeriods] = useState<PricePeriod[]>(
+    defaultSportPricePeriods(5000),
+  );
   const [images, setImages] = useState<string[]>([]);
   const [inventory, setInventory] = useState(1);
   const [error, setError] = useState<string | null>(null);
 
   const [facilityMaxGuests, setFacilityMaxGuests] = useState<number | undefined>();
   const [facilityInventory, setFacilityInventory] = useState(1);
+  const [facilityBusinessName, setFacilityBusinessName] = useState('');
+  const [facilityMaxPlayers, setFacilityMaxPlayers] = useState<number | undefined>();
 
   const load = useCallback(async () => {
     try {
       const facility = await container.providerApi.getMineById(providerId);
-      const catName = facility.category?.name;
+      const catName =
+        facility.categoryName ?? facility.category?.name ?? undefined;
       const hotel = isHotelCategory(catName);
-      const chalet = isChaletCategory(catName);
+      const tairaman =
+        isTairamanCategory(catName) ||
+        isTairamanCategory(facility.category?.name);
+      const chalet =
+        isChaletCategory(catName) ||
+        isChaletCategory(facility.category?.name) ||
+        tairaman;
+      const hall =
+        isHallCategory(catName) || isHallCategory(facility.category?.name);
+      const sport =
+        isSportCategory(catName) || isSportCategory(facility.category?.name);
       setIsHotel(hotel);
       setIsChalet(chalet);
+      setIsTairaman(tairaman);
+      setIsHall(hall);
+      setIsSport(sport);
+      setFacilityBusinessName(facility.businessName?.trim() || '');
       const fa = (facility.attributes ?? {}) as Record<string, unknown>;
       setFacilityMaxGuests(
         toOptionalNum(fa.maxGuests) ??
           toOptionalNum(fa.capacity) ??
           toOptionalNum(fa.guests),
+      );
+      setFacilityMaxPlayers(
+        toOptionalNum(fa.maxPlayers) ??
+          toOptionalNum(fa.players) ??
+          toOptionalNum(fa.capacity),
       );
       const facilityUnits =
         toOptionalNum(fa.inventory) ?? toOptionalNum(fa.units) ?? 1;
@@ -154,17 +205,44 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         setBasePrice(String(svc.basePrice ?? ''));
         setImages(svc.images ?? []);
         const a = svc.attributes ?? {};
-        if (!chalet) {
+        if ((!chalet || tairaman) && !sport) {
           setCapacity(toOptionalNum(a.capacity) ?? toOptionalNum(a.guests));
-          setBeds(
-            toOptionalNum(a.beds) ??
-              toOptionalNum(a.rooms) ??
-              toOptionalNum(a.bedrooms),
-          );
+          if (hotel) {
+            setMaxChildren(
+              toOptionalNum(a.maxChildren) ??
+                toOptionalNum(a.childrenCapacity) ??
+                0,
+            );
+          }
+          if (!tairaman) {
+            setBeds(
+              toOptionalNum(a.beds) ??
+                toOptionalNum(a.rooms) ??
+                toOptionalNum(a.bedrooms),
+            );
+          }
+        }
+        if (tairaman) {
+          const units =
+            toOptionalNum(a.inventory) ??
+            toOptionalNum(a.units) ??
+            (svc.availabilities?.[0]?.totalCapacity ?? 1);
+          setInventory(units && units > 0 ? units : 1);
         }
         const storedPeriod = parseStoredPeriod(a);
         setPeriod(storedPeriod);
-        if (storedPeriod === 'MORNING' || storedPeriod === 'EVENING') {
+        if (tairaman || hall) {
+          setFromTime(
+            typeof a.fromTime === 'string' && a.fromTime.trim()
+              ? String(a.fromTime).slice(0, 5)
+              : '10:00',
+          );
+          setToTime(
+            typeof a.toTime === 'string' && a.toTime.trim()
+              ? String(a.toTime).slice(0, 5)
+              : '21:00',
+          );
+        } else if (storedPeriod === 'MORNING' || storedPeriod === 'EVENING') {
           const defaults = DEFAULT_PERIOD_TIMES[storedPeriod];
           setFromTime(
             typeof a.fromTime === 'string' && a.fromTime.trim()
@@ -177,7 +255,9 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
               : defaults.to,
           );
         }
-        if (!chalet) {
+        if (tairaman) {
+          // inventory already loaded from package attributes above
+        } else if (!chalet) {
           const units =
             toOptionalNum(a.inventory) ??
             toOptionalNum(a.units) ??
@@ -187,6 +267,15 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
           setInventory(facilityUnits > 0 ? facilityUnits : 1);
         }
 
+        if (sport) {
+          const savedPeriods = parsePricePeriods(a.pricePeriods);
+          setPricePeriods(
+            savedPeriods.length
+              ? savedPeriods
+              : defaultSportPricePeriods(Number(svc.basePrice) || 5000),
+          );
+        }
+
         const saved = readServicePrices(a, svc.basePrice);
         setPrices({
           NEW_YER: saved.NEW_YER != null ? String(saved.NEW_YER) : String(svc.basePrice ?? ''),
@@ -194,6 +283,18 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
           SAR: saved.SAR != null ? String(saved.SAR) : '',
           USD: saved.USD != null ? String(saved.USD) : '',
         });
+      } else if (sport) {
+        setPricePeriods(defaultSportPricePeriods(5000));
+        setName(facility.businessName?.trim() || 'باقة أسعار');
+      } else if (hall || tairaman) {
+        setFromTime('10:00');
+        setToTime('21:00');
+        if (tairaman) {
+          setCapacity(25);
+          setInventory(1);
+        }
+      } else if (hotel) {
+        setMaxChildren(0);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'تعذر التحميل');
@@ -219,21 +320,88 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
     }
   };
 
-  const useMultiCurrency = isHotel || isChalet;
-  const entityLabel = isHotel ? 'الغرفة' : isChalet ? 'الباقة' : 'الخدمة';
-  const entityLabelIndef = isHotel ? 'غرفة' : isChalet ? 'باقة' : 'خدمة';
+  const useMultiCurrency = isHotel || isChalet || isHall;
+  const entityLabel = isHotel
+    ? 'الغرفة'
+    : isChalet || isHall
+      ? 'الباقة'
+      : isSport
+        ? 'فترات الأسعار'
+        : 'الخدمة';
+  const entityLabelIndef = isHotel
+    ? 'غرفة'
+    : isChalet || isHall
+      ? 'باقة'
+      : isSport
+        ? 'فترات الأسعار'
+        : 'خدمة';
+
+  const updatePeriod = (id: string, patch: Partial<PricePeriod>) => {
+    setPricePeriods((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, ...patch } : p)),
+    );
+  };
+
+  const addPeriod = () => {
+    setPricePeriods((prev) => {
+      if (prev.length >= 6) return prev;
+      const last = prev[prev.length - 1];
+      return [
+        ...prev,
+        {
+          id: `p${Date.now()}`,
+          label: periodLabelForIndex(prev.length),
+          fromTime: last?.toTime ?? '20:00',
+          toTime: '22:00',
+          pricePerHour: last?.pricePerHour ?? 5000,
+        },
+      ];
+    });
+  };
+
+  const removePeriod = (id: string) => {
+    setPricePeriods((prev) => (prev.length <= 1 ? prev : prev.filter((p) => p.id !== id)));
+  };
 
   const submit = async () => {
-    const trimmed = name.trim();
-    if (!trimmed) {
+    // Sport packages inherit identity from the facility form.
+    const trimmed = isSport
+      ? name.trim() || facilityBusinessName || 'باقة أسعار'
+      : name.trim();
+    if (!isSport && !trimmed) {
       setError(`أدخل اسم ${entityLabelIndef}`);
       return;
     }
 
     let newYerPrice: number;
     let multiPrices: ServicePrices | undefined;
+    let cleanedPeriods: PricePeriod[] | undefined;
 
-    if (useMultiCurrency) {
+    if (isSport) {
+      if (!pricePeriods.length) {
+        setError('أضف فترة سعر واحدةحة على الأقل');
+        return;
+      }
+      cleanedPeriods = [];
+      for (const p of pricePeriods) {
+        if (!isValidTime(p.fromTime) || !isValidTime(p.toTime)) {
+          setError(`أدخل وقتاً صحيحاً لـ«${p.label}»`);
+          return;
+        }
+        if (!Number.isFinite(p.pricePerHour) || p.pricePerHour < 0) {
+          setError(`أدخل سعراً صحيحاً لـ«${p.label}»`);
+          return;
+        }
+        cleanedPeriods.push({
+          ...p,
+          fromTime: p.fromTime.trim().slice(0, 5),
+          toTime: p.toTime.trim().slice(0, 5),
+          pricePerHour: Math.round(p.pricePerHour),
+          label: p.label.trim() || periodLabelForIndex(cleanedPeriods.length),
+        });
+      }
+      newYerPrice = Math.min(...cleanedPeriods.map((p) => p.pricePerHour));
+    } else if (useMultiCurrency) {
       const parsed: ServicePrices = {};
       for (const { code, label } of PRICE_FIELDS) {
         const n = parsePriceInput(prices[code]);
@@ -256,10 +424,26 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
 
     if (
       isChalet &&
+      !isTairaman &&
       (period === 'MORNING' || period === 'EVENING') &&
       (!isValidTime(fromTime) || !isValidTime(toTime))
     ) {
       setError('أدخل وقت البداية والنهاية بصيغة ساعة:دقيقة (مثال 08:00)');
+      return;
+    }
+    if (
+      (isHall || isTairaman) &&
+      (!isValidTime(fromTime) || !isValidTime(toTime))
+    ) {
+      setError('أدخل وقت البداية والنهاية بصيغة ساعة:دقيقة (مثال 10:00)');
+      return;
+    }
+    if ((isHall || isTairaman) && (capacity == null || capacity < 1)) {
+      setError('أدخل سعة الباقة (عدد الأشخاص)');
+      return;
+    }
+    if (isTairaman && (!inventory || inventory < 1)) {
+      setError('أدخل عدد الطيرمانات المتاحة لهذه الباقة');
       return;
     }
 
@@ -268,7 +452,18 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
     try {
       const attributes: Record<string, unknown> = {};
 
-      if (isChalet) {
+      if (isTairaman) {
+        attributes.fromTime = fromTime.trim();
+        attributes.toTime = toTime.trim();
+        const guests = Math.max(1, Math.floor(Number(capacity)));
+        attributes.capacity = guests;
+        attributes.guests = guests;
+        attributes.maxGuests = guests;
+        delete attributes.period;
+        const units = Math.max(1, Math.floor(Number(inventory)));
+        attributes.inventory = units;
+        attributes.units = units;
+      } else if (isChalet) {
         attributes.period = period;
         if (period === 'MORNING' || period === 'EVENING') {
           attributes.fromTime = fromTime.trim();
@@ -282,6 +477,26 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         // Unit count lives on the facility — mirror for calendar seed only.
         attributes.inventory = facilityInventory;
         attributes.units = facilityInventory;
+      } else if (isHall) {
+        attributes.fromTime = fromTime.trim();
+        attributes.toTime = toTime.trim();
+        if (capacity != null && capacity > 0) {
+          attributes.capacity = capacity;
+          attributes.guests = capacity;
+          attributes.maxGuests = capacity;
+        }
+        attributes.inventory = 1;
+        attributes.units = 1;
+      } else if (isSport) {
+        attributes.pricePeriods = cleanedPeriods;
+        // Players / dimensions live on the facility — mirror for booking UI only.
+        if (facilityMaxPlayers != null && facilityMaxPlayers > 0) {
+          attributes.capacity = facilityMaxPlayers;
+          attributes.guests = facilityMaxPlayers;
+          attributes.players = facilityMaxPlayers;
+          attributes.maxPlayers = facilityMaxPlayers;
+          attributes.maxGuests = facilityMaxPlayers;
+        }
       } else {
         if (capacity != null && capacity > 0) {
           attributes.capacity = capacity;
@@ -294,6 +509,9 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
             attributes.rooms = beds;
             attributes.bedrooms = beds;
           }
+          const kids = Math.max(0, Math.floor(Number(maxChildren ?? 0)));
+          attributes.maxChildren = kids;
+          attributes.childrenCapacity = kids;
           attributes.inventory = inventory;
           attributes.units = inventory;
         } else if (beds != null && beds > 0) {
@@ -309,10 +527,10 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
 
       const payload = {
         name: trimmed,
-        description: description.trim() || undefined,
+        description: isSport ? undefined : description.trim() || undefined,
         basePrice: newYerPrice,
         depositPercentage: DEPOSIT_PERCENTAGE,
-        images,
+        images: isSport ? [] : images,
         attributes,
       };
 
@@ -327,13 +545,26 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         id = created.id;
       }
 
-      if (id && (isHotel || isChalet || !isEdit)) {
-        const capacity = isChalet
-          ? Math.max(1, facilityInventory)
-          : Math.max(1, inventory);
+      if (id && isSport) {
+        const hours = hoursCoveredByPeriods(cleanedPeriods ?? pricePeriods);
+        await container.serviceApi.seedHourlyAvailabilities(id, {
+          days: 14,
+          hours: hours.length ? hours : undefined,
+          startHour: hours[0] ?? 8,
+          endHour: (hours[hours.length - 1] ?? 21) + 1,
+          totalCapacity: 1,
+        });
+      } else if (id && (isHotel || isChalet || isHall || !isEdit)) {
+        const seedCap = isTairaman
+          ? Math.max(1, Math.floor(Number(inventory)))
+          : isChalet
+            ? Math.max(1, facilityInventory)
+            : isHall
+              ? 1
+              : Math.max(1, inventory);
         await container.serviceApi.seedAvailabilities(id, {
           days: SEED_DAYS,
-          totalCapacity: capacity,
+          totalCapacity: seedCap,
         });
       }
 
@@ -367,64 +598,167 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
 
       <KeyboardAwareScrollView
         contentContainerStyle={styles.scroll}
-        bottomOffset={40}
+        bottomOffset={72}
       >
-        <CloudinaryImagePicker
-          urls={images}
-          onChange={setImages}
-          label={`صور ${entityLabel}`}
-        />
+        {!isSport ? (
+          <CloudinaryImagePicker
+            urls={images}
+            onChange={setImages}
+            label={`صور ${entityLabel}`}
+          />
+        ) : null}
 
-        <View style={styles.card}>
-          {isHotel || isChalet ? (
+        {!isSport ? (
+          <View style={styles.card}>
+            {isHotel || isChalet ? (
+              <Text style={styles.hint}>
+                {isHotel
+                  ? 'الغرف هي خدمات الفندق — تظهر في «استعراض الغرف» على صفحة التفاصيل.'
+                  : isTairaman
+                    ? 'الباقات هي خدمات الطيرمان — تظهر في قسم الباقات على صفحة التفاصيل.'
+                    : 'الباقات هي خدمات الشاليه — تظهر في قسم «الغرف والباقات» على صفحة التفاصيل.'}
+              </Text>
+            ) : null}
+
+            <View style={styles.field}>
+              <Text style={styles.label}>اسم {entityLabel}</Text>
+              <TextInput
+                style={styles.input}
+                value={name}
+                onChangeText={setName}
+                placeholder={
+                  isHotel
+                    ? 'مثال: غرفة ديلوكس'
+                    : isTairaman
+                      ? 'مثال: ليلة في الطيرمان'
+                      : isChalet
+                        ? 'مثال: ليلة في الشاليه'
+                        : 'اسم الخدمة'
+                }
+                placeholderTextColor={theme.colors.textSecondary}
+                textAlign="right"
+              />
+            </View>
+
+            <View style={styles.field}>
+              <Text style={styles.label}>الوصف</Text>
+              <TextInput
+                style={[styles.input, styles.textArea]}
+                value={description}
+                onChangeText={setDescription}
+                placeholder={
+                  isHotel
+                    ? 'وصف الغرفة والمرافق'
+                    : isChalet
+                      ? 'وصف الباقة وما تشمله'
+                      : 'وصف الخدمة'
+                }
+                placeholderTextColor={theme.colors.textSecondary}
+                textAlign="right"
+                multiline
+              />
+            </View>
+          </View>
+        ) : (
+          <View style={styles.card}>
             <Text style={styles.hint}>
-              {isHotel
-                ? 'الغرف هي خدمات الفندق — تظهر في «استعراض الغرف» على صفحة التفاصيل.'
-                : 'الباقات هي خدمات الشاليه — تظهر في قسم «الغرف والباقات» على صفحة التفاصيل.'}
+              الاسم والصور والوصف وعدد اللاعبين وأبعاد الملعب تُضبط من تفاصيل
+              المنشأة. هنا تُضاف فترات الأسعار فقط.
             </Text>
-          ) : null}
-
-          <View style={styles.field}>
-            <Text style={styles.label}>اسم {entityLabel}</Text>
-            <TextInput
-              style={styles.input}
-              value={name}
-              onChangeText={setName}
-              placeholder={
-                isHotel
-                  ? 'مثال: غرفة ديلوكس'
-                  : isChalet
-                    ? 'مثال: ليلة في الشاليه'
-                    : 'اسم الخدمة'
-              }
-              placeholderTextColor={theme.colors.textSecondary}
-              textAlign="right"
-            />
           </View>
-
-          <View style={styles.field}>
-            <Text style={styles.label}>الوصف</Text>
-            <TextInput
-              style={[styles.input, styles.textArea]}
-              value={description}
-              onChangeText={setDescription}
-              placeholder={
-                isHotel
-                  ? 'وصف الغرفة والمرافق'
-                  : isChalet
-                    ? 'وصف الباقة وما تشمله'
-                    : 'وصف الخدمة'
-              }
-              placeholderTextColor={theme.colors.textSecondary}
-              textAlign="right"
-              multiline
-            />
-          </View>
-        </View>
+        )}
 
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>الأسعار</Text>
-          {useMultiCurrency ? (
+          <Text style={styles.sectionTitle}>
+            {isSport ? 'تفاصيل الأسعار' : 'الأسعار'}
+          </Text>
+          {isSport ? (
+            <>
+              <Text style={styles.hint}>
+                حدّد فترات الملعب وسعر الساعة لكل فترة. يظهر للعميل كبطاقة أسعار،
+                ويُحسب الحجز حسب الفترة المختارة.
+              </Text>
+              {pricePeriods.map((p, index) => (
+                <View key={p.id} style={styles.periodCard}>
+                  <View style={styles.periodCardTop}>
+                    <Text style={styles.periodCardTitle}>
+                      {p.label || periodLabelForIndex(index)}
+                    </Text>
+                    {pricePeriods.length > 1 ? (
+                      <Pressable onPress={() => removePeriod(p.id)} hitSlop={8}>
+                        <Text style={styles.removePeriod}>حذف</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>اسم الفترة</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={p.label}
+                      onChangeText={(v) => updatePeriod(p.id, { label: v })}
+                      placeholder={periodLabelForIndex(index)}
+                      placeholderTextColor={theme.colors.textSecondary}
+                      textAlign="right"
+                    />
+                  </View>
+                  <View style={styles.timeRow}>
+                    <View style={[styles.field, styles.timeField]}>
+                      <Text style={styles.label}>من</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={p.fromTime}
+                        onChangeText={(v) =>
+                          updatePeriod(p.id, { fromTime: normalizeTimeInput(v) })
+                        }
+                        placeholder="08:00"
+                        placeholderTextColor={theme.colors.textSecondary}
+                        keyboardType="number-pad"
+                        maxLength={5}
+                        textAlign="center"
+                      />
+                    </View>
+                    <View style={[styles.field, styles.timeField]}>
+                      <Text style={styles.label}>إلى</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={p.toTime}
+                        onChangeText={(v) =>
+                          updatePeriod(p.id, { toTime: normalizeTimeInput(v) })
+                        }
+                        placeholder="12:00"
+                        placeholderTextColor={theme.colors.textSecondary}
+                        keyboardType="number-pad"
+                        maxLength={5}
+                        textAlign="center"
+                      />
+                    </View>
+                  </View>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>السعر / ساعة (ريال جديد)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={String(p.pricePerHour || '')}
+                      onChangeText={(v) => {
+                        const n = Number(String(v).replace(/[^\d]/g, ''));
+                        updatePeriod(p.id, {
+                          pricePerHour: Number.isFinite(n) ? n : 0,
+                        });
+                      }}
+                      keyboardType="number-pad"
+                      placeholder="5000"
+                      placeholderTextColor={theme.colors.textSecondary}
+                      textAlign="right"
+                    />
+                  </View>
+                </View>
+              ))}
+              {pricePeriods.length < 6 ? (
+                <Pressable style={styles.addPeriodBtn} onPress={addPeriod}>
+                  <Text style={styles.addPeriodText}>+ إضافة فترة</Text>
+                </Pressable>
+              ) : null}
+            </>
+          ) : useMultiCurrency ? (
             <>
               <Text style={styles.hint}>
                 أدخل السعر بكل العملات — يظهر للعميل حسب عملته المختارة.
@@ -460,46 +794,122 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
           )}
           <Text style={styles.meta}>
             العربون ثابت {DEPOSIT_PERCENTAGE}% لجميع{' '}
-            {isHotel ? 'الغرف' : isChalet ? 'الباقات' : 'الخدمات'}
+            {isHotel
+              ? 'الغرف'
+              : isChalet || isHall
+                ? 'الباقات'
+                : isSport
+                  ? 'الحجوزات'
+                  : 'الخدمات'}
           </Text>
         </View>
 
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>التفاصيل</Text>
-          {isChalet ? (
-            <Text style={styles.hint}>
-              مواصفات الشاليه (الأشخاص، الحمامات، الغرف…) تؤخذ من تفاصيل المنشأة.
-            </Text>
-          ) : null}
-          <View style={styles.steppers}>
-            {isChalet ? (
-              <>
-                <View style={styles.field}>
-                  <Text style={styles.label}>فترة الباقة</Text>
-                  <View style={styles.periodRow}>
-                    {PERIOD_OPTIONS.map((opt) => {
-                      const selected = period === opt.id;
-                      return (
-                        <Pressable
-                          key={opt.id}
-                          style={[styles.periodChip, selected && styles.periodChipOn]}
-                          onPress={() => selectPeriod(opt.id)}
-                        >
-                          <Text
-                            style={[
-                              styles.periodChipText,
-                              selected && styles.periodChipTextOn,
-                            ]}
+        {!isSport ? (
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>التفاصيل</Text>
+            {isChalet && !isTairaman ? (
+              <Text style={styles.hint}>
+                مواصفات الشاليه (الأشخاص، الحمامات، الغرف…) تؤخذ من تفاصيل
+                المنشأة.
+              </Text>
+            ) : null}
+            {isTairaman ? (
+              <Text style={styles.hint}>
+                أدخل سعة الباقة والوقت من–إلى — تظهر كما هي في صفحة الطيرمان.
+              </Text>
+            ) : null}
+            {isHall ? (
+              <Text style={styles.hint}>
+                أدخل اسم الباقة والسعة ووقت المناسبة — تظهر كما هي في صفحة الصالة.
+              </Text>
+            ) : null}
+            <View style={styles.steppers}>
+              {isChalet && !isTairaman ? (
+                <>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>فترة الباقة</Text>
+                    <View style={styles.periodRow}>
+                      {PERIOD_OPTIONS.map((opt) => {
+                        const selected = period === opt.id;
+                        return (
+                          <Pressable
+                            key={opt.id}
+                            style={[styles.periodChip, selected && styles.periodChipOn]}
+                            onPress={() => selectPeriod(opt.id)}
                           >
-                            {opt.label}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
+                            <Text
+                              style={[
+                                styles.periodChipText,
+                                selected && styles.periodChipTextOn,
+                              ]}
+                            >
+                              {opt.label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
                   </View>
-                </View>
 
-                {period === 'MORNING' || period === 'EVENING' ? (
+                  {period === 'MORNING' || period === 'EVENING' ? (
+                    <View style={styles.timeRow}>
+                      <View style={[styles.field, styles.timeField]}>
+                        <Text style={styles.label}>من الساعة</Text>
+                        <TextInput
+                          style={styles.input}
+                          value={fromTime}
+                          onChangeText={(v) => setFromTime(normalizeTimeInput(v))}
+                          placeholder="08:00"
+                          placeholderTextColor={theme.colors.textSecondary}
+                          keyboardType="number-pad"
+                          maxLength={5}
+                          textAlign="center"
+                        />
+                      </View>
+                      <View style={[styles.field, styles.timeField]}>
+                        <Text style={styles.label}>إلى الساعة</Text>
+                        <TextInput
+                          style={styles.input}
+                          value={toTime}
+                          onChangeText={(v) => setToTime(normalizeTimeInput(v))}
+                          placeholder="16:00"
+                          placeholderTextColor={theme.colors.textSecondary}
+                          keyboardType="number-pad"
+                          maxLength={5}
+                          textAlign="center"
+                        />
+                      </View>
+                    </View>
+                  ) : (
+                    <Text style={styles.meta}>
+                      السعر لليلة واحدةحة. عند حجز ليلتين أو أكثر يُحسب السعر × عدد
+                      الليالي. العميل يختار تاريخ الوصول والمغادرة عند الحجز.
+                    </Text>
+                  )}
+
+                  <Text style={styles.meta}>
+                    عدد الشاليهات المتاحة ({facilityInventory}) يُضبط من تفاصيل
+                    المنشأة.
+                  </Text>
+                </>
+              ) : isTairaman || isHall ? (
+                <>
+                  <QuantityStepper
+                    label="السعة (أشخاص أو أقل)"
+                    value={capacity}
+                    onChange={setCapacity}
+                    min={1}
+                    maxLength={6}
+                  />
+                  {isTairaman ? (
+                    <QuantityStepper
+                      label="عدد الطيرمانات المتاحة لهذه الباقة"
+                      value={inventory}
+                      onChange={(n) => setInventory(Math.max(1, n ?? 1))}
+                      min={1}
+                      maxLength={6}
+                    />
+                  ) : null}
                   <View style={styles.timeRow}>
                     <View style={[styles.field, styles.timeField]}>
                       <Text style={styles.label}>من الساعة</Text>
@@ -507,7 +917,7 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
                         style={styles.input}
                         value={fromTime}
                         onChangeText={(v) => setFromTime(normalizeTimeInput(v))}
-                        placeholder="08:00"
+                        placeholder="10:00"
                         placeholderTextColor={theme.colors.textSecondary}
                         keyboardType="number-pad"
                         maxLength={5}
@@ -520,7 +930,7 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
                         style={styles.input}
                         value={toTime}
                         onChangeText={(v) => setToTime(normalizeTimeInput(v))}
-                        placeholder="16:00"
+                        placeholder="21:00"
                         placeholderTextColor={theme.colors.textSecondary}
                         keyboardType="number-pad"
                         maxLength={5}
@@ -528,45 +938,47 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
                       />
                     </View>
                   </View>
-                ) : (
-                  <Text style={styles.meta}>
-                    السعر لليلة واحدةحة. عند حجز ليلتين أو أكثر يُحسب السعر × عدد
-                    الليالي. العميل يختار تاريخ الوصول والمغادرة عند الحجز.
-                  </Text>
-                )}
-
-                <Text style={styles.meta}>
-                  عدد الشاليهات المتاحة ({facilityInventory}) يُضبط من تفاصيل
-                  المنشأة.
-                </Text>
-              </>
-            ) : (
-              <>
-                <QuantityStepper
-                  label="السعة (أشخاص)"
-                  value={capacity}
-                  onChange={setCapacity}
-                  min={0}
-                />
-                <QuantityStepper
-                  label={isHotel ? 'عدد الأسرة' : 'غرف / وحدات'}
-                  value={beds}
-                  onChange={setBeds}
-                  min={0}
-                />
-                <QuantityStepper
-                  label={isHotel ? 'عدد الغرف من هذا النوع' : 'الكمية المتاحة يومياً'}
-                  value={inventory}
-                  onChange={(n) => setInventory(Math.max(1, n ?? 1))}
-                  min={1}
-                />
-              </>
-            )}
+                </>
+              ) : (
+                <>
+                  <QuantityStepper
+                    label={isHotel ? 'الحد الأقصى للكبار (بدون الأطفال)' : 'السعة (أشخاص)'}
+                    value={capacity}
+                    onChange={setCapacity}
+                    min={0}
+                  />
+                  {isHotel ? (
+                    <QuantityStepper
+                      label="الحد الأقصى للأطفال (لا يُحسب من سعة الكبار)"
+                      value={maxChildren}
+                      onChange={setMaxChildren}
+                      min={0}
+                    />
+                  ) : null}
+                  <QuantityStepper
+                    label={isHotel ? 'عدد الأسرة' : 'غرف / وحدات'}
+                    value={beds}
+                    onChange={setBeds}
+                    min={0}
+                  />
+                  <QuantityStepper
+                    label={isHotel ? 'عدد الغرف من هذا النوع' : 'الكمية المتاحة يومياً'}
+                    value={inventory}
+                    onChange={(n) => setInventory(Math.max(1, n ?? 1))}
+                    min={1}
+                  />
+                </>
+              )}
+            </View>
+            <Text style={styles.meta}>
+              يُفتح التقويم تلقائياً لـ {SEED_DAYS} يوماً القادمة
+            </Text>
           </View>
+        ) : (
           <Text style={styles.meta}>
-            يُفتح التقويم تلقائياً لـ {SEED_DAYS} يوماً القادمة
+            يُفتح جدول الساعات تلقائياً لـ 14 يوماً القادمة
           </Text>
-        </View>
+        )}
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
@@ -700,6 +1112,42 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
   },
   periodChipTextOn: { color: '#fff' },
+  periodCard: {
+    backgroundColor: '#F7F9FC',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: 12,
+    gap: 10,
+  },
+  periodCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  periodCardTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: theme.colors.primary,
+  },
+  removePeriod: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: theme.colors.error,
+  },
+  addPeriodBtn: {
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    borderStyle: 'dashed',
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  addPeriodText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: theme.colors.primary,
+  },
   timeRow: {
     flexDirection: 'row',
     gap: 10,

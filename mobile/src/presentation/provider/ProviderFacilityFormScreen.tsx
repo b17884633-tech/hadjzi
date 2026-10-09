@@ -26,6 +26,11 @@ import { findCategoryInTree, rootCategories } from '../../data/mappers/homeMappe
 import { getSelectedCity } from '../../data/local/cityStorage';
 import { RootStackParamList } from '../navigation/types';
 import { CityPickerSheet } from '../home/components/CityPickerSheet';
+import { SmoothBottomSheet } from '../../core/ui/components/SmoothBottomSheet';
+import {
+  facilityDisabledBy,
+  type ProviderProfile,
+} from '../../data/remote/providerApi';
 import { CloudinaryImagePicker } from './CloudinaryImagePicker';
 import { DynamicLineList } from './DynamicLineList';
 import { OptionPickerSheet } from './OptionPickerSheet';
@@ -69,6 +74,18 @@ const DEFAULT_CHALET_TERMS = [
 ];
 const DEFAULT_CHALET_DEPOSIT =
   'سياسة الشاليهات: مبلغ العربون لا يرجع مطلقاً';
+const DEFAULT_TAIRAMAN_DEPOSIT =
+  'سياسة الطيرمانات: مبلغ العربون لا يرجع مطلقاً';
+const DEFAULT_HALL_SPACES = ['موقف سيارات خارجي'];
+/** Halls mock shows spaces + address; amenities stay optional. */
+const DEFAULT_HALL_AMENITIES: string[] = [];
+const DEFAULT_HALL_TERMS = [
+  'لا يجوز للعميل إلغاء أو تعديل موعد المناسبة بعد حجزها.',
+  'يلتزم العميل بالوصول إلى الصالة قبل ثلاث ساعات من موعد بدء فعاليات المناسبة على الأقل.',
+  'يلتزم العميل بإخلاء الصالة وتسليمها إلى المشرف العام في الموعد المحدد.',
+];
+const DEFAULT_HALL_DEPOSIT =
+  'سياسة القاعات: مبلغ العربون لا يرجع مطلقاً';
 const DEFAULT_INSURANCE_META = 'قطعة ذهب';
 const DEFAULT_INSURANCE_NOTE =
   'يدفع مبلغ التأمين للإدارة عند الوصول ويُسترجع بعد انتهاء الحجز بشرط سلامة الممتلكات حسب سياسة المنشأة.';
@@ -77,8 +94,24 @@ function isHotelCategory(name?: string | null) {
   return /فنادق|فندق|hotel/i.test(name ?? '');
 }
 
+function isTairamanCategory(name?: string | null) {
+  return /طيرمان|طرمان|tairaman/i.test(name ?? '');
+}
+
+/** Same facility form as chalets (spaces, rooms, insurance, packages…). */
 function isChaletCategory(name?: string | null) {
-  return /شالي|chalet/i.test(name ?? '');
+  return /شالي|chalet/i.test(name ?? '') || isTairamanCategory(name);
+}
+
+function isHallCategory(name?: string | null) {
+  return /صالة|قاعة|صالات|قاعات|hall|wedding|زفاف/i.test(name ?? '');
+}
+
+function isSportCategory(name?: string | null) {
+  // ملاعب (plural) ≠ ملعب (singular) — must list both.
+  return /ملاعب|ملعب|مسبح|نادي|كرة|بادل|رياض|padel|football|sport/i.test(
+    name ?? '',
+  );
 }
 
 function linesToList(text: string): string[] {
@@ -127,6 +160,9 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
   const [images, setImages] = useState<string[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoryTree, setCategoryTree] = useState<Category[]>([]);
+  /** Root category shown in the main dropdown. */
+  const [parentCategoryId, setParentCategoryId] = useState<number | null>(null);
+  /** Effective category saved on the provider (subcategory when present). */
   const [categoryId, setCategoryId] = useState<number | null>(null);
   /** Locked category name from API (edit) — roots list alone can miss the match. */
   const [lockedCategoryName, setLockedCategoryName] = useState<string | null>(null);
@@ -137,6 +173,7 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
   );
   const [error, setError] = useState<string | null>(null);
   const [categoryOpen, setCategoryOpen] = useState(false);
+  const [subCategoryOpen, setSubCategoryOpen] = useState(false);
   const [cityOpen, setCityOpen] = useState(false);
 
   const [spaces, setSpaces] = useState<string[]>(DEFAULT_HOTEL_SPACES);
@@ -149,13 +186,38 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
   const [bathrooms, setBathrooms] = useState<number | undefined>(4);
   const [bedrooms, setBedrooms] = useState<number | undefined>(2);
   const [majlis, setMajlis] = useState<number | undefined>(1);
+  /** Playground: total players (shown as N max (N/2 × N/2)). */
+  const [maxPlayers, setMaxPlayers] = useState<number | undefined>(12);
+  /** Playground length / height in meters. */
+  const [fieldLength, setFieldLength] = useState('');
+  /** Playground width in meters. */
+  const [fieldWidth, setFieldWidth] = useState('');
   const [insuranceAmount, setInsuranceAmount] = useState('');
   const [insuranceMeta, setInsuranceMeta] = useState(DEFAULT_INSURANCE_META);
   const [insuranceNote, setInsuranceNote] = useState(DEFAULT_INSURANCE_NOTE);
   const [tourUrl, setTourUrl] = useState('');
   const [facilityEnabled, setFacilityEnabled] = useState(true);
+  const [disabledBy, setDisabledBy] = useState<'ADMIN' | 'PROVIDER' | null>(
+    null,
+  );
+  const [disableReasonSaved, setDisableReasonSaved] = useState<string | null>(
+    null,
+  );
+  const [disableSheetOpen, setDisableSheetOpen] = useState(false);
+  const [disableReasonDraft, setDisableReasonDraft] = useState('');
   const [togglingEnabled, setTogglingEnabled] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+
+  const applyFacilityStatus = (me: ProviderProfile) => {
+    const by = facilityDisabledBy(me);
+    setFacilityEnabled(me.status !== 'SUSPENDED');
+    setDisabledBy(by);
+    const reason =
+      typeof me.attributes?.disableReason === 'string'
+        ? me.attributes.disableReason.trim()
+        : '';
+    setDisableReasonSaved(reason || null);
+  };
 
   const defaultsAppliedFor = useRef<string | null>(null);
 
@@ -170,6 +232,25 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
     };
   }, []);
 
+  const parentCategory = useMemo(() => {
+    if (parentCategoryId == null) return null;
+    return (
+      categories.find((c) => c.id === parentCategoryId) ??
+      findCategoryInTree(categoryTree, parentCategoryId)
+    );
+  }, [categories, parentCategoryId, categoryTree]);
+
+  const subcategories = useMemo(
+    () => parentCategory?.children?.filter(Boolean) ?? [],
+    [parentCategory],
+  );
+  const hasSubcategories = subcategories.length > 0;
+
+  const selectedSubCategory = useMemo(() => {
+    if (!hasSubcategories || categoryId == null) return null;
+    return subcategories.find((c) => c.id === categoryId) ?? null;
+  }, [hasSubcategories, categoryId, subcategories]);
+
   const selectedCategory = useMemo(() => {
     if (categoryId == null) return null;
     return (
@@ -177,56 +258,178 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
       findCategoryInTree(categoryTree, categoryId)
     );
   }, [categories, categoryId, categoryTree]);
+
   const selectedCity = useMemo(
     () => cities.find((c) => c.id === cityId) ?? null,
     [cities, cityId],
   );
-  const categoryName = selectedCategory?.name ?? lockedCategoryName;
-  const isHotel = isHotelCategory(categoryName);
-  const isChalet = isChaletCategory(categoryName);
-  const hasDetailCard = isHotel || isChalet;
 
-  const applyCategoryDefaults = useCallback((kind: 'hotel' | 'chalet' | 'other') => {
-    if (kind === 'hotel') {
-      setSpaces(DEFAULT_HOTEL_SPACES);
-      setAmenities(DEFAULT_HOTEL_AMENITIES);
-      setDepositNote(DEFAULT_HOTEL_DEPOSIT);
-      setTermsText(listToLines(DEFAULT_HOTEL_TERMS));
-      setPolicyText(listToLines(DEFAULT_HOTEL_POLICY));
-      setMaxGuests(undefined);
-      setBathrooms(undefined);
-      setBedrooms(undefined);
-      setMajlis(undefined);
-      setInsuranceAmount('');
-      setInsuranceMeta(DEFAULT_INSURANCE_META);
-      setInsuranceNote(DEFAULT_INSURANCE_NOTE);
-      setTourUrl('');
-    } else if (kind === 'chalet') {
-      setSpaces(DEFAULT_CHALET_SPACES);
-      setAmenities(DEFAULT_CHALET_AMENITIES);
-      setDepositNote(DEFAULT_CHALET_DEPOSIT);
-      setTermsText(listToLines(DEFAULT_CHALET_TERMS));
-      setPolicyText('');
-      setMaxGuests(8);
-      setInventory(1);
-      setBathrooms(4);
-      setBedrooms(2);
-      setMajlis(1);
-      setInsuranceAmount('');
-      setInsuranceMeta(DEFAULT_INSURANCE_META);
-      setInsuranceNote(DEFAULT_INSURANCE_NOTE);
-      setTourUrl('');
+  // Hotel/chalet/hall templates follow the root category (or locked API name).
+  const categoryName =
+    parentCategory?.name ?? selectedCategory?.name ?? lockedCategoryName;
+  const isHotel = isHotelCategory(categoryName);
+  const isTairaman =
+    isTairamanCategory(categoryName) ||
+    isTairamanCategory(parentCategory?.name) ||
+    isTairamanCategory(selectedCategory?.name) ||
+    isTairamanCategory(lockedCategoryName);
+  const isChalet =
+    isChaletCategory(categoryName) ||
+    isChaletCategory(parentCategory?.name) ||
+    isChaletCategory(selectedCategory?.name) ||
+    isChaletCategory(lockedCategoryName) ||
+    isTairaman;
+  const isHall =
+    isHallCategory(categoryName) ||
+    isHallCategory(parentCategory?.name) ||
+    isHallCategory(selectedCategory?.name) ||
+    isHallCategory(lockedCategoryName);
+  const stayNoun = isTairaman ? 'طيرمان' : 'شاليه';
+  const stayNounPlural = isTairaman ? 'الطيرمانات' : 'الشاليهات';
+  // Match parent or subcategory (e.g. الملاعب / كرة قدم).
+  const isSport =
+    isSportCategory(categoryName) ||
+    isSportCategory(parentCategory?.name) ||
+    isSportCategory(selectedCategory?.name);
+  const hasDetailCard = isHotel || isChalet || isHall || isSport;
+  const showInsuranceFields = isChalet || isHall;
+  const playersPerSide =
+    maxPlayers != null && maxPlayers > 0 ? Math.floor(maxPlayers / 2) : undefined;
+  const showSubCategoryField =
+    (!isEdit && hasSubcategories) ||
+    (isEdit && selectedCategory?.parentId != null);
+
+  const selectParentCategory = useCallback((parentId: number) => {
+    setParentCategoryId(parentId);
+    const parent =
+      categories.find((c) => c.id === parentId) ??
+      findCategoryInTree(categoryTree, parentId);
+    const kids = parent?.children ?? [];
+    if (kids.length > 0) {
+      // Require an explicit subcategory choice.
+      setCategoryId(null);
+    } else {
+      setCategoryId(parentId);
     }
-  }, []);
+  }, [categories, categoryTree]);
+
+  const applyCategoryDefaults = useCallback(
+    (kind: 'hotel' | 'chalet' | 'tairaman' | 'hall' | 'sport' | 'other') => {
+      if (kind === 'hotel') {
+        setSpaces(DEFAULT_HOTEL_SPACES);
+        setAmenities(DEFAULT_HOTEL_AMENITIES);
+        setDepositNote(DEFAULT_HOTEL_DEPOSIT);
+        setTermsText(listToLines(DEFAULT_HOTEL_TERMS));
+        setPolicyText(listToLines(DEFAULT_HOTEL_POLICY));
+        setMaxGuests(undefined);
+        setBathrooms(undefined);
+        setBedrooms(undefined);
+        setMajlis(undefined);
+        setMaxPlayers(undefined);
+        setFieldLength('');
+        setFieldWidth('');
+        setInsuranceAmount('');
+        setInsuranceMeta(DEFAULT_INSURANCE_META);
+        setInsuranceNote(DEFAULT_INSURANCE_NOTE);
+        setTourUrl('');
+      } else if (kind === 'chalet') {
+        setSpaces(DEFAULT_CHALET_SPACES);
+        setAmenities(DEFAULT_CHALET_AMENITIES);
+        setDepositNote(DEFAULT_CHALET_DEPOSIT);
+        setTermsText(listToLines(DEFAULT_CHALET_TERMS));
+        setPolicyText('');
+        setMaxGuests(8);
+        setInventory(1);
+        setBathrooms(4);
+        setBedrooms(2);
+        setMajlis(1);
+        setMaxPlayers(undefined);
+        setFieldLength('');
+        setFieldWidth('');
+        setInsuranceAmount('');
+        setInsuranceMeta(DEFAULT_INSURANCE_META);
+        setInsuranceNote(DEFAULT_INSURANCE_NOTE);
+        setTourUrl('');
+      } else if (kind === 'tairaman') {
+        setSpaces(DEFAULT_CHALET_SPACES);
+        setAmenities(DEFAULT_CHALET_AMENITIES);
+        setDepositNote(DEFAULT_TAIRAMAN_DEPOSIT);
+        setTermsText(listToLines(DEFAULT_CHALET_TERMS));
+        setPolicyText('');
+        setMaxGuests(8);
+        setInventory(1);
+        setBathrooms(4);
+        setBedrooms(2);
+        setMajlis(1);
+        setMaxPlayers(undefined);
+        setFieldLength('');
+        setFieldWidth('');
+        setInsuranceAmount('');
+        setInsuranceMeta(DEFAULT_INSURANCE_META);
+        setInsuranceNote(DEFAULT_INSURANCE_NOTE);
+        setTourUrl('');
+      } else if (kind === 'hall') {
+        setSpaces(DEFAULT_HALL_SPACES);
+        setAmenities(DEFAULT_HALL_AMENITIES);
+        setDepositNote(DEFAULT_HALL_DEPOSIT);
+        setTermsText(listToLines(DEFAULT_HALL_TERMS));
+        setPolicyText('');
+        setMaxGuests(undefined);
+        setBathrooms(undefined);
+        setBedrooms(undefined);
+        setMajlis(undefined);
+        setMaxPlayers(undefined);
+        setFieldLength('');
+        setFieldWidth('');
+        setInsuranceAmount('');
+        setInsuranceMeta(DEFAULT_INSURANCE_META);
+        setInsuranceNote(DEFAULT_INSURANCE_NOTE);
+        setTourUrl('');
+      } else if (kind === 'sport') {
+        setSpaces(['إضاءة', 'كرات']);
+        setAmenities(['موقف سيارات', 'غرف تبديل']);
+        setDepositNote('');
+        setTermsText('');
+        setPolicyText('');
+        setMaxPlayers(12);
+        setFieldLength('40');
+        setFieldWidth('21');
+        setMaxGuests(undefined);
+        setBathrooms(undefined);
+        setBedrooms(undefined);
+        setMajlis(undefined);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
-    if (isEdit || !selectedCategory) return;
-    const kind = isHotel ? 'hotel' : isChalet ? 'chalet' : 'other';
-    const key = `${kind}:${selectedCategory.id}`;
+    if (isEdit || !parentCategory) return;
+    const kind = isHotel
+      ? 'hotel'
+      : isTairaman
+        ? 'tairaman'
+        : isChalet
+          ? 'chalet'
+          : isHall
+            ? 'hall'
+            : isSport
+              ? 'sport'
+              : 'other';
+    const key = `${kind}:${parentCategory.id}`;
     if (defaultsAppliedFor.current === key) return;
     defaultsAppliedFor.current = key;
     if (kind !== 'other') applyCategoryDefaults(kind);
-  }, [applyCategoryDefaults, isChalet, isEdit, isHotel, selectedCategory]);
+  }, [
+    applyCategoryDefaults,
+    isChalet,
+    isEdit,
+    isHall,
+    isHotel,
+    isSport,
+    isTairaman,
+    parentCategory,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -253,8 +456,16 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
           setDescription(me.description ?? '');
           setAddressDetails(me.addressDetails ?? '');
           setImages(me.images ?? []);
-          setCategoryId(me.categoryId ?? roots[0]?.id ?? null);
-          setLockedCategoryName(me.category?.name ?? null);
+          const savedCatId = me.categoryId ?? roots[0]?.id ?? null;
+          const savedNode =
+            savedCatId != null ? findCategoryInTree(treeData, savedCatId) : null;
+          const parentId =
+            savedNode?.parentId != null
+              ? savedNode.parentId
+              : savedCatId;
+          setParentCategoryId(parentId);
+          setCategoryId(savedCatId);
+          setLockedCategoryName(me.category?.name ?? savedNode?.name ?? null);
           setCityId(me.cityId ?? storedCity?.id ?? cityList[0]?.id ?? 1);
           const attrs =
             me.attributes && typeof me.attributes === 'object' && !Array.isArray(me.attributes)
@@ -287,6 +498,19 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
             toOptionalNum(attrs.bedrooms) ?? toOptionalNum(attrs.rooms),
           );
           setMajlis(toOptionalNum(attrs.majlis));
+          setMaxPlayers(
+            toOptionalNum(attrs.maxPlayers) ??
+              toOptionalNum(attrs.players) ??
+              toOptionalNum(attrs.capacity),
+          );
+          const len =
+            toOptionalNum(attrs.fieldLength) ??
+            toOptionalNum(attrs.fieldHeight) ??
+            toOptionalNum(attrs.length);
+          const wid =
+            toOptionalNum(attrs.fieldWidth) ?? toOptionalNum(attrs.width);
+          setFieldLength(len != null ? String(len) : '');
+          setFieldWidth(wid != null ? String(wid) : '');
           const insAmt = toOptionalNum(attrs.insuranceAmount);
           setInsuranceAmount(insAmt != null ? String(insAmt) : '');
           if (typeof attrs.insuranceMeta === 'string' && attrs.insuranceMeta.trim()) {
@@ -298,7 +522,7 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
           if (typeof attrs.tourUrl === 'string') {
             setTourUrl(attrs.tourUrl);
           }
-          setFacilityEnabled(me.status !== 'SUSPENDED');
+          applyFacilityStatus(me);
           defaultsAppliedFor.current = `loaded:${me.id}`;
         } else {
           const preferred =
@@ -306,7 +530,14 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
             roots.find((c) => isHotelCategory(c.name)) ??
             roots[0] ??
             null;
-          setCategoryId(preferred?.id ?? null);
+          if (preferred) {
+            setParentCategoryId(preferred.id);
+            const kids = preferred.children ?? [];
+            setCategoryId(kids.length > 0 ? null : preferred.id);
+          } else {
+            setParentCategoryId(null);
+            setCategoryId(null);
+          }
           setCityId(storedCity?.id ?? cityList[0]?.id ?? 1);
         }
       } catch (e) {
@@ -327,20 +558,63 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
       setError('أدخل اسم المنشأة');
       return;
     }
+    if (!parentCategoryId) {
+      setError('اختر التصنيف');
+      return;
+    }
+    if (hasSubcategories && !categoryId) {
+      setError('اختر التصنيف الفرعي');
+      return;
+    }
     if (!categoryId) {
       setError('اختر التصنيف');
       return;
     }
-    if (isChalet && (maxGuests == null || maxGuests < 1)) {
+    if (isChalet && !isTairaman && (maxGuests == null || maxGuests < 1)) {
       setError('أدخل الحد الأقصى للأشخاص');
       return;
     }
-    if (isChalet && (!inventory || inventory < 1)) {
-      setError('أدخل عدد الشاليهات المتاحة');
+    if (isChalet && !isTairaman && (!inventory || inventory < 1)) {
+      setError(`أدخل عدد ${stayNounPlural} المتاحة`);
+      return;
+    }
+    if (isSport && (maxPlayers == null || maxPlayers < 2)) {
+      setError('أدخل الحد الأقصى للاعبين (على الأقل 2)');
+      return;
+    }
+    const parsedLength = parseOptionalAmount(fieldLength);
+    const parsedWidth = parseOptionalAmount(fieldWidth);
+    if (isSport && (parsedLength == null || parsedLength <= 0)) {
+      setError('أدخل طول الملعب بالمتر');
+      return;
+    }
+    if (isSport && (parsedWidth == null || parsedWidth <= 0)) {
+      setError('أدخل عرض الملعب بالمتر');
       return;
     }
     setSaving(true);
     setError(null);
+
+    const applyOptionalInsurance = (attributes: Record<string, unknown>) => {
+      const ins = parseOptionalAmount(insuranceAmount);
+      if (ins != null) {
+        attributes.insuranceAmount = ins;
+        if (insuranceMeta.trim()) {
+          attributes.insuranceMeta = insuranceMeta.trim();
+        } else {
+          delete attributes.insuranceMeta;
+        }
+        if (insuranceNote.trim()) {
+          attributes.insuranceNote = insuranceNote.trim();
+        } else {
+          delete attributes.insuranceNote;
+        }
+      } else {
+        delete attributes.insuranceAmount;
+        delete attributes.insuranceMeta;
+        delete attributes.insuranceNote;
+      }
+    };
 
     let attributes: Record<string, unknown> | undefined;
     if (isHotel) {
@@ -353,33 +627,69 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
         policyBullets: linesToList(policyText),
       };
     } else if (isChalet) {
-      const guests = Math.max(1, Math.floor(Number(maxGuests)));
-      const units = Math.max(1, Math.floor(Number(inventory)));
       attributes = {
         ...existingAttributes,
         spaces: cleanList(spaces),
         amenities: cleanList(amenities),
-        depositNote: depositNote.trim() || DEFAULT_CHALET_DEPOSIT,
+        depositNote:
+          depositNote.trim() ||
+          (isTairaman ? DEFAULT_TAIRAMAN_DEPOSIT : DEFAULT_CHALET_DEPOSIT),
         terms: linesToList(termsText),
         policyBullets: linesToList(policyText),
-        maxGuests: guests,
-        capacity: guests,
-        guests,
-        inventory: units,
-        units,
       };
+      // Capacity + unit count live on each package for طيرمانات.
+      if (!isTairaman) {
+        const guests = Math.max(1, Math.floor(Number(maxGuests)));
+        const units = Math.max(1, Math.floor(Number(inventory)));
+        attributes.maxGuests = guests;
+        attributes.capacity = guests;
+        attributes.guests = guests;
+        attributes.inventory = units;
+        attributes.units = units;
+      } else {
+        delete attributes.maxGuests;
+        delete attributes.capacity;
+        delete attributes.guests;
+        delete attributes.inventory;
+        delete attributes.units;
+      }
       if (bathrooms != null && bathrooms > 0) attributes.bathrooms = bathrooms;
       if (bedrooms != null && bedrooms > 0) {
         attributes.bedrooms = bedrooms;
         attributes.rooms = bedrooms;
       }
       if (majlis != null && majlis > 0) attributes.majlis = majlis;
-      const ins = parseOptionalAmount(insuranceAmount);
-      if (ins != null) attributes.insuranceAmount = ins;
-      if (insuranceMeta.trim()) attributes.insuranceMeta = insuranceMeta.trim();
-      if (insuranceNote.trim()) attributes.insuranceNote = insuranceNote.trim();
+      applyOptionalInsurance(attributes);
       if (tourUrl.trim()) attributes.tourUrl = tourUrl.trim();
       else delete attributes.tourUrl;
+    } else if (isHall) {
+      attributes = {
+        ...existingAttributes,
+        spaces: cleanList(spaces),
+        amenities: cleanList(amenities),
+        depositNote: depositNote.trim() || DEFAULT_HALL_DEPOSIT,
+        terms: linesToList(termsText),
+        policyBullets: linesToList(policyText),
+      };
+      applyOptionalInsurance(attributes);
+    } else if (isSport) {
+      const players = Math.max(2, Math.floor(Number(maxPlayers)));
+      attributes = {
+        ...existingAttributes,
+        spaces: cleanList(spaces),
+        amenities: cleanList(amenities),
+        terms: linesToList(termsText),
+        policyBullets: linesToList(policyText),
+        maxPlayers: players,
+        players,
+        capacity: players,
+        guests: players,
+        fieldLength: parsedLength,
+        fieldHeight: parsedLength,
+        length: parsedLength,
+        fieldWidth: parsedWidth,
+        width: parsedWidth,
+      };
     }
 
     const payload = {
@@ -387,7 +697,9 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
       description: description.trim() || undefined,
       addressDetails: addressDetails.trim() || undefined,
       cancellationPolicy:
-        isHotel || isChalet ? depositNote.trim() || undefined : undefined,
+        isHotel || isChalet || isHall
+          ? depositNote.trim() || undefined
+          : undefined,
       ...(isEdit
         ? {}
         : {
@@ -401,8 +713,9 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
     try {
       if (isEdit && providerId) {
         await container.providerApi.updateMine(providerId, payload);
-        // Propagate facility unit count to all package calendars.
-        if (isChalet) {
+        // Propagate facility unit count to all package calendars (chalets only —
+        // طيرمانات set capacity per package).
+        if (isChalet && !isTairaman) {
           const units = Math.max(1, Math.floor(Number(inventory)));
           const services = await container.serviceApi.listMine(providerId);
           await Promise.all(
@@ -437,6 +750,8 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
     businessName,
     maxGuests,
     inventory,
+    parentCategoryId,
+    hasSubcategories,
     categoryId,
     cityId,
     container,
@@ -449,8 +764,15 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
     insuranceNote,
     isChalet,
     isEdit,
+    isHall,
     isHotel,
+    isSport,
+    isTairaman,
+    stayNounPlural,
     majlis,
+    maxPlayers,
+    fieldLength,
+    fieldWidth,
     navigation,
     policyText,
     providerId,
@@ -461,19 +783,59 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
     user,
   ]);
 
-  const toggleFacilityEnabled = async () => {
+  const onToggleEnabledPress = () => {
     if (!providerId || togglingEnabled) return;
-    const next = !facilityEnabled;
+    if (facilityEnabled) {
+      setDisableReasonDraft('');
+      setDisableSheetOpen(true);
+      return;
+    }
+    if (disabledBy === 'ADMIN') {
+      setError(
+        'تم إيقاف هذه المنشأة من الإدارة — لا يمكن تفعيلها إلا بواسطة الأدمن',
+      );
+      return;
+    }
+    void applyEnabled(true);
+  };
+
+  const applyEnabled = async (enabled: boolean, reason?: string) => {
+    if (!providerId || togglingEnabled) return;
     setTogglingEnabled(true);
     setError(null);
     try {
-      const updated = await container.providerApi.setEnabled(providerId, next);
-      setFacilityEnabled(updated.status !== 'SUSPENDED');
+      const updated = await container.providerApi.setEnabled(
+        providerId,
+        enabled,
+        reason,
+      );
+      applyFacilityStatus(updated);
+      setDisableSheetOpen(false);
+      setDisableReasonDraft('');
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'تعذر تحديث حالة المنشأة');
+      const msg =
+        (e as { response?: { data?: { message?: string | string[] } } })
+          ?.response?.data?.message;
+      const text = Array.isArray(msg)
+        ? msg.join('\n')
+        : typeof msg === 'string'
+          ? msg
+          : e instanceof Error
+            ? e.message
+            : 'تعذر تحديث حالة المنشأة';
+      setError(text);
     } finally {
       setTogglingEnabled(false);
     }
+  };
+
+  const confirmDisable = () => {
+    const note = disableReasonDraft.trim();
+    if (note.length < 5) {
+      setError('اكتب سبب التعطيل (5 أحرف على الأقل)');
+      return;
+    }
+    void applyEnabled(false, note);
   };
 
   if (loading) {
@@ -490,12 +852,17 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
     ? 'تعديل المنشأة'
     : isHotel
       ? 'إضافة فندق'
-      : isChalet
-        ? 'إضافة شاليه'
-        : 'منشأة جديدة';
+      : isTairaman
+        ? 'إضافة طيرمان'
+        : isChalet
+          ? 'إضافة شاليه'
+          : 'منشأة جديدة';
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={keyboardOpen ? ['top', 'left', 'right'] : ['top', 'left', 'right', 'bottom']}
+    >
       <FormKeyboardView>
       <View style={styles.topBar}>
         <BackButton />
@@ -507,7 +874,7 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
         style={styles.scrollFlex}
         contentContainerStyle={styles.scroll}
         avoidKeyboard={false}
-        bottomOffset={48}
+        bottomOffset={72}
       >
         <CloudinaryImagePicker urls={images} onChange={setImages} label="صور المنشأة" />
 
@@ -521,9 +888,11 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
               placeholder={
                 isHotel
                   ? 'مثال: فندق الجزائر'
-                  : isChalet
-                    ? 'مثال: شالية رقم 1 (VIP)'
-                    : 'اسم المنشأة'
+                  : isTairaman
+                    ? 'مثال: طيرمان الورد (VIP)'
+                    : isChalet
+                      ? 'مثال: شالية رقم 1 (VIP)'
+                      : 'اسم المنشأة'
               }
               placeholderTextColor={theme.colors.textSecondary}
               textAlign="right"
@@ -536,7 +905,7 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
               <View style={[styles.select, styles.selectLocked]}>
                 <Ionicons name="lock-closed-outline" size={16} color={theme.colors.textSecondary} />
                 <Text style={styles.selectValue} numberOfLines={1}>
-                  {categoryName ?? '—'}
+                  {parentCategory?.name ?? categoryName ?? '—'}
                 </Text>
               </View>
             ) : (
@@ -545,15 +914,53 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
                 <Text
                   style={[
                     styles.selectValue,
-                    !selectedCategory && styles.selectPlaceholder,
+                    !parentCategory && styles.selectPlaceholder,
                   ]}
                   numberOfLines={1}
                 >
-                  {selectedCategory?.name ?? 'اختر التصنيف'}
+                  {parentCategory?.name ?? 'اختر التصنيف'}
                 </Text>
               </Pressable>
             )}
           </View>
+
+          {showSubCategoryField ? (
+            <View style={styles.field}>
+              <Text style={styles.label}>التصنيف الفرعي</Text>
+              {isEdit ? (
+                <View style={[styles.select, styles.selectLocked]}>
+                  <Ionicons
+                    name="lock-closed-outline"
+                    size={16}
+                    color={theme.colors.textSecondary}
+                  />
+                  <Text style={styles.selectValue} numberOfLines={1}>
+                    {selectedSubCategory?.name ?? selectedCategory?.name ?? '—'}
+                  </Text>
+                </View>
+              ) : (
+                <Pressable
+                  style={styles.select}
+                  onPress={() => setSubCategoryOpen(true)}
+                >
+                  <Ionicons
+                    name="chevron-down"
+                    size={18}
+                    color={theme.colors.textSecondary}
+                  />
+                  <Text
+                    style={[
+                      styles.selectValue,
+                      !selectedSubCategory && styles.selectPlaceholder,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {selectedSubCategory?.name ?? 'اختر التصنيف الفرعي'}
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+          ) : null}
 
           <View style={styles.field}>
             <Text style={styles.label}>المدينة</Text>
@@ -593,9 +1000,13 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
             <Text style={styles.label}>
               {isHotel
                 ? 'عن الفنادق (الوصف)'
-                : isChalet
-                  ? 'عن الشاليهات (الوصف)'
-                  : 'الوصف'}
+                : isTairaman
+                  ? 'عن الطيرمانات (الوصف)'
+                  : isChalet
+                    ? 'عن الشاليهات (الوصف)'
+                    : isSport
+                      ? 'عن الملعب (الوصف)'
+                      : 'الوصف'}
             </Text>
             <TextInput
               style={[styles.input, styles.textArea]}
@@ -604,9 +1015,13 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
               placeholder={
                 isHotel
                   ? 'نبذة تظهر تحت «عن الفنادق»'
-                  : isChalet
-                    ? 'مثال: إقامة لليلة واحدة مع مسبح خاص'
-                    : 'نبذة عن منشأتك'
+                  : isTairaman
+                    ? 'مثال: جلسة مريحة مع مجلس خارجي'
+                    : isChalet
+                      ? 'مثال: إقامة لليلة واحدة مع مسبح خاص'
+                      : isSport
+                        ? 'مثال: ملعب عشبي بإضاءة كاملة'
+                        : 'نبذة عن منشأتك'
               }
               placeholderTextColor={theme.colors.textSecondary}
               textAlign="right"
@@ -620,8 +1035,8 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
             <View style={styles.enableRow}>
               <Switch
                 value={facilityEnabled}
-                onValueChange={() => void toggleFacilityEnabled()}
-                disabled={togglingEnabled}
+                onValueChange={onToggleEnabledPress}
+                disabled={togglingEnabled || (!facilityEnabled && disabledBy === 'ADMIN')}
                 trackColor={{
                   false: '#D1D5DB',
                   true: theme.colors.accent,
@@ -635,8 +1050,15 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
                 <Text style={styles.enableHint}>
                   {facilityEnabled
                     ? 'إظهار المنشأة للعملاء في البحث والحجز'
-                    : 'إخفاء المنشأة من البحث — لن يتمكن العملاء من حجزها'}
+                    : disabledBy === 'ADMIN'
+                      ? 'أوقفها الأدمن — لا يمكنك تفعيلها بنفسك'
+                      : 'مخفية عن العملاء — يمكنك إعادة تفعيلها في أي وقت'}
                 </Text>
+                {!facilityEnabled && disableReasonSaved ? (
+                  <Text style={styles.enableReason}>
+                    السبب: {disableReasonSaved}
+                  </Text>
+                ) : null}
               </View>
             </View>
           </View>
@@ -645,30 +1067,95 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
         {hasDetailCard ? (
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>
-              {isHotel ? 'تفاصيل صفحة الفندق' : 'تفاصيل صفحة الشاليه'}
+              {isHotel
+                ? 'تفاصيل صفحة الفندق'
+                : isChalet
+                  ? `تفاصيل صفحة ال${stayNoun}`
+                  : 'تفاصيل صفحة الملعب'}
             </Text>
             <Text style={styles.hint}>
               {isHotel
                 ? 'الغرف تُضاف لاحقاً كخدمات داخل المنشأة عبر «إضافة غرفة».'
-                : 'الباقات تُضاف لاحقاً كخدمات داخل المنشأة عبر «إضافة باقة».'}
+                : isChalet
+                  ? 'الباقات تُضاف لاحقاً كخدمات داخل المنشأة عبر «إضافة باقة».'
+                  : 'فترات الأسعار تُضاف لاحقاً كخدمة داخل المنشأة عبر «إضافة ملعب / باقة».'}
             </Text>
+
+            {isSport ? (
+              <>
+                <Text style={styles.subSection}>مواصفات الملعب</Text>
+                <View style={styles.steppers}>
+                  <QuantityStepper
+                    label="الحد الأقصى للاعبين"
+                    value={maxPlayers}
+                    onChange={setMaxPlayers}
+                    min={2}
+                  />
+                </View>
+                {maxPlayers != null && playersPerSide != null ? (
+                  <Text style={styles.meta}>
+                    يظهر للعميل: {maxPlayers} لاعب كحد أقصى ({playersPerSide} ×{' '}
+                    {playersPerSide})
+                  </Text>
+                ) : null}
+                <View style={styles.timeRow}>
+                  <View style={[styles.field, styles.timeField]}>
+                    <Text style={styles.label}>الطول (متر)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={fieldLength}
+                      onChangeText={setFieldLength}
+                      keyboardType="decimal-pad"
+                      placeholder="40"
+                      placeholderTextColor={theme.colors.textSecondary}
+                      textAlign="center"
+                    />
+                  </View>
+                  <View style={[styles.field, styles.timeField]}>
+                    <Text style={styles.label}>العرض (متر)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={fieldWidth}
+                      onChangeText={setFieldWidth}
+                      keyboardType="decimal-pad"
+                      placeholder="21"
+                      placeholderTextColor={theme.colors.textSecondary}
+                      textAlign="center"
+                    />
+                  </View>
+                </View>
+                {fieldLength.trim() && fieldWidth.trim() ? (
+                  <Text style={styles.meta}>
+                    يظهر للعميل: {fieldLength.trim()} × {fieldWidth.trim()} متر مربع
+                  </Text>
+                ) : null}
+              </>
+            ) : null}
 
             {isChalet ? (
               <>
-                <Text style={styles.subSection}>مواصفات الشاليه</Text>
+                <Text style={styles.subSection}>مواصفات ال{stayNoun}</Text>
                 <View style={styles.steppers}>
-                  <QuantityStepper
-                    label="الحد الأقصى لعدد الأشخاص"
-                    value={maxGuests}
-                    onChange={setMaxGuests}
-                    min={1}
-                  />
-                  <QuantityStepper
-                    label="عدد الشاليهات المتاحة"
-                    value={inventory}
-                    onChange={(n) => setInventory(Math.max(1, n ?? 1))}
-                    min={1}
-                  />
+                  {!isTairaman ? (
+                    <>
+                      <QuantityStepper
+                        label="الحد الأقصى لعدد الأشخاص"
+                        value={maxGuests}
+                        onChange={setMaxGuests}
+                        min={1}
+                      />
+                      <QuantityStepper
+                        label={`عدد ${stayNounPlural} المتاحة`}
+                        value={inventory}
+                        onChange={(n) => setInventory(Math.max(1, n ?? 1))}
+                        min={1}
+                      />
+                    </>
+                  ) : (
+                    <Text style={styles.hintInline}>
+                      عدد الأشخاص وعدد الطيرمانات المتاحة يُحددان داخل كل باقة.
+                    </Text>
+                  )}
                   <QuantityStepper
                     label="حمامات"
                     value={bathrooms}
@@ -707,11 +1194,15 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
             ) : null}
 
             <DynamicLineList
-              label="المساحات المتوفرة"
+              label={isSport ? 'مرافق الملعب' : 'المساحات المتوفرة'}
               hint={
-                isChalet
-                  ? 'مثال: استيم، ساونا، سينما، مسبح كبار'
-                  : 'مثال: موقف سيارات، مسبح…'
+                isSport
+                  ? 'مثال: إضاءة، كرات، مدرج'
+                  : isChalet
+                    ? 'مثال: استيم، ساونا، سينما، مسبح كبار'
+                    : isHall
+                      ? 'مثال: موقف سيارات خارجي، مسرح، حديقة'
+                      : 'مثال: موقف سيارات، مسبح…'
               }
               items={spaces}
               onChange={setSpaces}
@@ -720,11 +1211,15 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
             />
 
             <DynamicLineList
-              label="وسائل الراحة"
+              label={isSport ? 'خدمات إضافية' : 'وسائل الراحة'}
               hint={
-                isChalet
-                  ? 'مثال: مطبخ، موقف خارجي، تدفئة، شاشات'
-                  : 'مثال: واي فاي، تكييف…'
+                isSport
+                  ? 'مثال: غرف تبديل، موقف سيارات'
+                  : isChalet
+                    ? 'مثال: مطبخ، موقف خارجي، تدفئة، شاشات'
+                    : isHall
+                      ? 'مثال: صوتيات، تكييف، إضاءة (اختياري)'
+                      : 'مثال: واي فاي، تكييف…'
               }
               items={amenities}
               onChange={setAmenities}
@@ -732,33 +1227,43 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
               addLabel="إضافة"
             />
 
+            {!isSport ? (
             <View style={styles.field}>
               <Text style={styles.label}>ملاحظة العربون</Text>
               <TextInput
                 style={[styles.input, styles.textArea]}
                 value={depositNote}
                 onChangeText={setDepositNote}
-                placeholder={isHotel ? DEFAULT_HOTEL_DEPOSIT : DEFAULT_CHALET_DEPOSIT}
+                placeholder={
+                  isHotel
+                    ? DEFAULT_HOTEL_DEPOSIT
+                    : isHall
+                      ? DEFAULT_HALL_DEPOSIT
+                      : isTairaman
+                        ? DEFAULT_TAIRAMAN_DEPOSIT
+                        : DEFAULT_CHALET_DEPOSIT
+                }
                 placeholderTextColor={theme.colors.textSecondary}
                 textAlign="right"
                 multiline
               />
             </View>
+            ) : null}
 
-            {isChalet ? (
+            {showInsuranceFields ? (
               <>
                 <Text style={styles.subSection}>التأمين على الممتلكات</Text>
+                <Text style={styles.hintInline}>
+                  اختياري — إن تُرك المبلغ فارغاً لن يظهر قسم التأمين للعملاء
+                </Text>
                 <View style={styles.field}>
                   <Text style={styles.label}>مبلغ التأمين (ريال جديد)</Text>
-                  <Text style={styles.hintInline}>
-                    اختياري — إن تُرك فارغاً يُحسب 10% من سعر الباقة
-                  </Text>
                   <TextInput
                     style={styles.input}
                     value={insuranceAmount}
                     onChangeText={setInsuranceAmount}
                     keyboardType="numeric"
-                    placeholder="مثال: 32000"
+                    placeholder="مثال: 150950"
                     placeholderTextColor={theme.colors.textSecondary}
                     textAlign="right"
                   />
@@ -846,10 +1351,22 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
             title="التصنيف"
             subtitle="اختر تصنيف منشأتك"
             options={categories.map((c) => ({ id: c.id, name: c.name }))}
-            selectedId={categoryId}
+            selectedId={parentCategoryId}
             onClose={() => setCategoryOpen(false)}
-            onSelect={(opt) => setCategoryId(Number(opt.id))}
+            onSelect={(opt) => selectParentCategory(Number(opt.id))}
           />
+
+          {hasSubcategories ? (
+            <OptionPickerSheet
+              visible={subCategoryOpen}
+              title="التصنيف الفرعي"
+              subtitle={`اختر نوعاً ضمن «${parentCategory?.name ?? 'التصنيف'}»`}
+              options={subcategories.map((c) => ({ id: c.id, name: c.name }))}
+              selectedId={categoryId}
+              onClose={() => setSubCategoryOpen(false)}
+              onSelect={(opt) => setCategoryId(Number(opt.id))}
+            />
+          ) : null}
 
           <CityPickerSheet
             visible={cityOpen}
@@ -862,6 +1379,47 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
           />
         </>
       ) : null}
+
+      <SmoothBottomSheet
+        visible={disableSheetOpen}
+        onClose={() => {
+          if (!togglingEnabled) setDisableSheetOpen(false);
+        }}
+        sheetStyle={styles.disableSheet}
+      >
+        <Text style={styles.disableSheetTitle}>سبب تعطيل المنشأة</Text>
+        <Text style={styles.disableSheetHint}>
+          سيظهر السبب للإدارة في صفحة الشكاوى. يمكنك إعادة تفعيل المنشأة لاحقاً.
+        </Text>
+        <TextInput
+          style={[styles.input, styles.textArea]}
+          value={disableReasonDraft}
+          onChangeText={setDisableReasonDraft}
+          placeholder="مثال: صيانة مؤقتة / سفر / إغلاق موسمي…"
+          placeholderTextColor={theme.colors.textSecondary}
+          textAlign="right"
+          multiline
+          autoFocus
+        />
+        <Pressable
+          style={[styles.primaryBtn, togglingEnabled && styles.btnDisabled]}
+          disabled={togglingEnabled}
+          onPress={confirmDisable}
+        >
+          {togglingEnabled ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.primaryBtnText}>تأكيد التعطيل</Text>
+          )}
+        </Pressable>
+        <Pressable
+          style={styles.disableCancel}
+          disabled={togglingEnabled}
+          onPress={() => setDisableSheetOpen(false)}
+        >
+          <Text style={styles.disableCancelText}>إلغاء</Text>
+        </Pressable>
+      </SmoothBottomSheet>
     </SafeAreaView>
   );
 }
@@ -951,6 +1509,14 @@ const styles = StyleSheet.create({
   textArea: { minHeight: 88, textAlignVertical: 'top' },
   textAreaTall: { minHeight: 120, textAlignVertical: 'top' },
   steppers: { gap: 12 },
+  timeRow: { flexDirection: 'row', gap: 10 },
+  timeField: { flex: 1 },
+  meta: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    textAlign: 'right',
+    lineHeight: 18,
+  },
   select: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -994,6 +1560,40 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     textAlign: 'right',
     lineHeight: 18,
+  },
+  enableReason: {
+    fontSize: 12,
+    color: theme.colors.primary,
+    textAlign: 'right',
+    lineHeight: 18,
+    marginTop: 4,
+    fontWeight: '600',
+  },
+  disableSheet: {
+    paddingHorizontal: 20,
+    paddingBottom: 24,
+    gap: 12,
+  },
+  disableSheetTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: theme.colors.primary,
+    textAlign: 'right',
+  },
+  disableSheetHint: {
+    fontSize: 13,
+    color: theme.colors.textSecondary,
+    textAlign: 'right',
+    lineHeight: 20,
+  },
+  disableCancel: {
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  disableCancelText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: theme.colors.textSecondary,
   },
   error: { color: theme.colors.error, textAlign: 'right', fontSize: 13 },
   primaryBtn: {

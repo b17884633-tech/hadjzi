@@ -21,6 +21,14 @@ export type ProviderProfile = {
   city?: { id: number; name: string } | null;
 };
 
+export function facilityDisabledBy(
+  provider: Pick<ProviderProfile, 'attributes' | 'status'> | null | undefined,
+): 'ADMIN' | 'PROVIDER' | null {
+  if (!provider || provider.status !== 'SUSPENDED') return null;
+  const v = provider.attributes?.disabledBy;
+  return v === 'ADMIN' || v === 'PROVIDER' ? v : 'PROVIDER';
+}
+
 export type CreateProviderPayload = {
   businessName: string;
   categoryId?: number;
@@ -94,10 +102,10 @@ export class ProviderApi {
     return response.data.data;
   }
 
-  async setEnabled(id: string, enabled: boolean) {
+  async setEnabled(id: string, enabled: boolean, reason?: string) {
     const response = await this.client.patch<ApiSuccessResponse<ProviderProfile>>(
       `/providers/me/${id}/enabled`,
-      { enabled },
+      { enabled, ...(reason != null ? { reason } : {}) },
     );
     return response.data.data;
   }

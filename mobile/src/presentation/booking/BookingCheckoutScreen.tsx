@@ -43,54 +43,73 @@ export function BookingCheckoutScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const total = params.price * params.quantity;
+  const slotCount = Math.max(1, params.availabilityIds?.length ?? 1);
+  const total = params.price * params.quantity * slotCount;
   const depositPct = DEPOSIT_PERCENTAGE;
   const depositAmount = Math.round((total * depositPct) / 100);
 
   const guestLine = useMemo(() => {
     const adults = params.adults ?? 0;
     const children = params.children ?? 0;
-    const totalPeople = adults + children;
-    if (!totalPeople) return null;
-    return `${totalPeople} أشخاص${children ? ` (${children} أطفال)` : ''}`;
+    if (!adults && !children) return null;
+    const parts: string[] = [];
+    if (adults > 0) parts.push(`${adults} كبار`);
+    if (children > 0) parts.push(`${children} أطفال`);
+    return parts.join(' · ');
   }, [params.adults, params.children]);
 
   const createBooking = async (
     transferRef: string,
     payMode: 'FULL' | 'DEPOSIT',
   ) => {
-    return container.lockBookingSlotUseCase.execute({
-      serviceId: params.serviceId,
-      availabilityId: params.availabilityId,
-      quantity: params.quantity,
-      bookingDate: params.bookingDate,
-      checkOutDate: params.checkOutDate,
-      startTime: params.startTime ?? undefined,
-      endTime: params.endTime ?? undefined,
-      customerNotes: [
-        params.attendanceType ? `نوع الحضور: ${params.attendanceType}` : null,
-        guestLine ? `عدد الأشخاص: ${guestLine}` : null,
-        params.checkOutDate ? `المغادرة: ${params.checkOutDate}` : null,
-        params.nights ? `الليالي: ${params.nights}` : null,
-        params.rooms ? `الغرف: ${params.rooms}` : null,
-        params.periodLabel ? `الفترة: ${params.periodLabel}` : null,
-        params.durationHours
-          ? `المدة: ${params.durationHours === 4 ? 'نصف يوم' : `${params.durationHours} ساعة`}`
-          : null,
-        params.deliveryTime ? `وقت التسليم: ${params.deliveryTime}` : null,
-        params.pickupPoint ? `الانطلاق: ${params.pickupPoint}` : null,
-        params.dropoffPoint ? `الوصول: ${params.dropoffPoint}` : null,
-        `طريقة الدفع: ${payMethod}`,
-        `وضع الدفع: ${payMode}`,
-        `رقم الحوالة: ${transferRef}`,
-      ]
-        .filter(Boolean)
-        .join(' | '),
-      paymentSubmitted: true,
-      paymentMethod: payMethod,
-      transferReference: transferRef,
-      payFull: payMode === 'FULL',
-    });
+    const slotIds =
+      params.availabilityIds && params.availabilityIds.length > 0
+        ? params.availabilityIds
+        : [params.availabilityId];
+
+    const notesBase = [
+      params.attendanceType ? `نوع الحضور: ${params.attendanceType}` : null,
+      guestLine ? `عدد الأشخاص: ${guestLine}` : null,
+      params.checkOutDate ? `المغادرة: ${params.checkOutDate}` : null,
+      params.nights ? `الليالي: ${params.nights}` : null,
+      params.rooms ? `الغرف: ${params.rooms}` : null,
+      params.periodLabel ? `الفترة: ${params.periodLabel}` : null,
+      params.durationHours
+        ? `المدة: ${params.durationHours === 4 ? 'نصف يوم' : `${params.durationHours} ساعة`}`
+        : null,
+      slotIds.length > 1 ? `عدد الفترات: ${slotIds.length}` : null,
+      params.deliveryTime ? `وقت التسليم: ${params.deliveryTime}` : null,
+      params.pickupPoint ? `الانطلاق: ${params.pickupPoint}` : null,
+      params.dropoffPoint ? `الوصول: ${params.dropoffPoint}` : null,
+      `طريقة الدفع: ${payMethod}`,
+      `وضع الدفع: ${payMode}`,
+      `رقم الحوالة: ${transferRef}`,
+    ]
+      .filter(Boolean)
+      .join(' | ');
+
+    // One booking per selected period so capacity locks correctly.
+    let first = null as Awaited<
+      ReturnType<typeof container.lockBookingSlotUseCase.execute>
+    > | null;
+    for (const availabilityId of slotIds) {
+      const booking = await container.lockBookingSlotUseCase.execute({
+        serviceId: params.serviceId,
+        availabilityId,
+        quantity: params.quantity,
+        bookingDate: params.bookingDate,
+        checkOutDate: params.checkOutDate,
+        startTime: params.startTime ?? undefined,
+        endTime: params.endTime ?? undefined,
+        customerNotes: notesBase,
+        paymentSubmitted: true,
+        paymentMethod: payMethod,
+        transferReference: transferRef,
+        payFull: payMode === 'FULL',
+      });
+      if (!first) first = booking;
+    }
+    return first!;
   };
 
   const onContinue = () => {

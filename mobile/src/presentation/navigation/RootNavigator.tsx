@@ -19,6 +19,7 @@ import { ProviderHomeScreen } from '../provider/ProviderHomeScreen';
 import { ProviderFacilityScreen } from '../provider/ProviderFacilityScreen';
 import { ProviderFacilityFormScreen } from '../provider/ProviderFacilityFormScreen';
 import { ProviderServiceFormScreen } from '../provider/ProviderServiceFormScreen';
+import { ProviderSlotScheduleScreen } from '../provider/ProviderSlotScheduleScreen';
 import { ProviderDeskBookingScreen } from '../provider/ProviderDeskBookingScreen';
 import { BackButton } from '../../core/ui/components/BackButton';
 import { theme } from '../../core/ui/theme';
@@ -134,6 +135,11 @@ export function RootNavigator() {
       <Stack.Screen
         name="ProviderServiceForm"
         component={ProviderServiceFormScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="ProviderSlotSchedule"
+        component={ProviderSlotScheduleScreen}
         options={{ headerShown: false }}
       />
       <Stack.Screen

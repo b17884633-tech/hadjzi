@@ -14,6 +14,8 @@ type Props = {
   children: number;
   /** Total guests allowed for this booking (rooms × capacity per room). */
   maxGuests?: number;
+  /** Max children allowed (rooms × max children per room). */
+  maxChildren?: number;
   onChangeAttendance: (v: string) => void;
   onChangeAdults: (n: number) => void;
   onChangeChildren: (n: number) => void;
@@ -62,6 +64,7 @@ export function GuestDetailsSheet({
   adults,
   children,
   maxGuests,
+  maxChildren,
   onChangeAttendance,
   onChangeAdults,
   onChangeChildren,
@@ -69,30 +72,36 @@ export function GuestDetailsSheet({
   onNext,
 }: Props) {
   const [typeOpen, setTypeOpen] = useState(false);
-  const total = adults + children;
-  const remaining =
-    maxGuests != null ? Math.max(0, maxGuests - total) : undefined;
-  const adultsMax =
-    maxGuests != null ? Math.max(1, maxGuests - children) : undefined;
-  const childrenMax =
-    maxGuests != null ? Math.max(0, maxGuests - adults) : undefined;
-  const overLimit = maxGuests != null && total > maxGuests;
-  const canNext = total >= 1 && !overLimit;
+  /** Persons = adults only; children have their own cap and are not counted. */
+  const adultsMax = maxGuests != null ? Math.max(1, maxGuests) : undefined;
+  const childrenMax = maxChildren != null ? Math.max(0, maxChildren) : undefined;
+  const overAdults = maxGuests != null && adults > maxGuests;
+  const overChildren = maxChildren != null && children > maxChildren;
+  const overLimit = overAdults || overChildren;
+  const canNext = adults >= 1 && !overLimit;
 
   return (
     <>
       <SmoothBottomSheet visible={visible} onClose={onClose} sheetStyle={styles.sheet}>
         <Text style={styles.title}>بيانات الأشخاص في الحجز</Text>
         <Text style={styles.subtitle}>
-          قم بتحديد نوع الحضور وعدد الأشخاص الحاضرين للحجز
+          قم بتحديد نوع الحضور وعدد الكبار والأطفال (الأطفال لا يُحسبون من سعة الأشخاص)
         </Text>
 
-        {maxGuests != null ? (
+        {maxGuests != null || maxChildren != null ? (
           <View style={styles.capBanner}>
             <Ionicons name="people-outline" size={16} color={theme.colors.primary} />
             <Text style={styles.capText}>
-              الحد الأقصى {maxGuests} أشخاص لهذه الغرف
-              {remaining != null ? ` · متبقي ${remaining}` : ''}
+              {[
+                maxGuests != null
+                  ? `حد الكبار ${maxGuests}`
+                  : null,
+                maxChildren != null
+                  ? `حد الأطفال ${maxChildren}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
             </Text>
           </View>
         ) : null}
@@ -132,9 +141,14 @@ export function GuestDetailsSheet({
           </View>
         </View>
 
-        {overLimit ? (
+        {overAdults ? (
           <Text style={styles.error}>
-            عدد الأشخاص يتجاوز سعة الغرف ({maxGuests})
+            عدد الكبار يتجاوز الحد المسموح ({maxGuests})
+          </Text>
+        ) : null}
+        {overChildren ? (
+          <Text style={styles.error}>
+            عدد الأطفال يتجاوز الحد المسموح ({maxChildren})
           </Text>
         ) : null}
 

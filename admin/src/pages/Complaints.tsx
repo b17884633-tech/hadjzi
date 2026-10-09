@@ -289,7 +289,11 @@ export function Complaints() {
           draft
             ? draft.bookingId
               ? `${draft.bookingNumber ?? '—'} · ${draft.facilityName ?? '—'}`
-              : 'General feedback'
+              : draft.subject === 'Facility disabled by provider'
+                ? `Provider self-disable · ${draft.facilityName ?? '—'}`
+                : draft.facilityName
+                  ? `Facility · ${draft.facilityName}`
+                  : 'General feedback'
             : undefined
         }
         onClose={() => setDraft(null)}

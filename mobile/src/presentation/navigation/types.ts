@@ -45,6 +45,7 @@ export type RootStackParamList = {
   ProviderFacility: { providerId: string };
   ProviderFacilityForm: { providerId?: string };
   ProviderServiceForm: { providerId: string; serviceId?: string };
+  ProviderSlotSchedule: { serviceId: string; serviceName: string };
   ProviderDeskBooking: { providerId: string };
 };
 

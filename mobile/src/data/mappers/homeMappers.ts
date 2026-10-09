@@ -145,15 +145,20 @@ export function findCategoryInTree(
   return null;
 }
 
+function isActiveService(s: ServiceItem): boolean {
+  return !s.status || s.status === 'ACTIVE';
+}
+
 export function cheapestService(provider: Provider): ServiceItem | undefined {
-  const priced = (provider.services ?? [])
+  const active = (provider.services ?? []).filter(isActiveService);
+  const priced = active
     .filter((s) => (s.priceFrom ?? s.basePrice) != null)
     .sort(
       (a, b) =>
         (a.priceFrom ?? a.basePrice ?? Number.POSITIVE_INFINITY) -
         (b.priceFrom ?? b.basePrice ?? Number.POSITIVE_INFINITY),
     );
-  return priced[0] ?? provider.services?.[0];
+  return priced[0] ?? active[0];
 }
 
 export function featureHintsFromProvider(provider: Provider): string[] {

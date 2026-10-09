@@ -123,6 +123,8 @@ export class BookingService {
         throw new NotFoundException('Availability slot not found');
       }
 
+      assertSlotWithinPricePeriods(service, checkInSlot);
+
       const checkInDate = toDateKey(checkInSlot.date);
       const checkOut =
         dto.checkOutDate && toDateKey(dto.checkOutDate) > checkInDate
@@ -143,7 +145,7 @@ export class BookingService {
         checkInSlot,
       );
 
-      const unitPrice = checkInSlot.customPrice ?? service.basePrice;
+      const unitPrice = unitPriceForSlot(service, checkInSlot);
       const totalAmount = roundMoney(unitPrice * quantity * nights);
       const depositPercentage = Number(service.depositPercentage);
       const depositAmount = roundMoney((totalAmount * depositPercentage) / 100);
@@ -333,7 +335,7 @@ export class BookingService {
     }
     return this.bookings.find({
       where: { customerId: user.id },
-      relations: ['service', 'provider', 'availability'],
+      relations: ['service', 'provider', 'availability', 'review'],
       order: { createdAt: 'DESC' },
     });
   }
@@ -341,7 +343,14 @@ export class BookingService {
   async findOneForUser(user: User, id: string) {
     const booking = await this.bookings.findOne({
       where: { id },
-      relations: ['service', 'provider', 'availability', 'payments', 'customer'],
+      relations: [
+        'service',
+        'provider',
+        'availability',
+        'payments',
+        'customer',
+        'review',
+      ],
     });
     if (!booking) {
       throw new NotFoundException('Booking not found');
@@ -585,4 +594,68 @@ function parseCheckOutFromNotes(notes?: string | null): string | null {
 
 function roundMoney(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function timeToMinutes(raw?: string | null): number | null {
+  if (!raw) return null;
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(raw).trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
+  return h * 60 + min;
+}
+
+function findPricePeriodForSlot(
+  service: ServiceItem,
+  slot: ServiceAvailability,
+): Record<string, unknown> | null {
+  const attrs = (service.attributes ?? {}) as Record<string, unknown>;
+  const periods = Array.isArray(attrs.pricePeriods) ? attrs.pricePeriods : [];
+  if (!periods.length) return null;
+  const t = timeToMinutes(slot.startTime);
+  if (t == null) return null;
+  for (const raw of periods) {
+    if (!raw || typeof raw !== 'object') continue;
+    const p = raw as Record<string, unknown>;
+    const from = timeToMinutes(
+      typeof p.fromTime === 'string' ? p.fromTime : null,
+    );
+    const to = timeToMinutes(typeof p.toTime === 'string' ? p.toTime : null);
+    if (from == null || to == null) continue;
+    const inBand = to > from ? t >= from && t < to : t >= from || t < to;
+    if (inBand) return p;
+  }
+  return null;
+}
+
+/** When price periods are configured, reject hours outside those windows. */
+function assertSlotWithinPricePeriods(
+  service: ServiceItem,
+  slot: ServiceAvailability,
+) {
+  const attrs = (service.attributes ?? {}) as Record<string, unknown>;
+  const periods = Array.isArray(attrs.pricePeriods) ? attrs.pricePeriods : [];
+  if (!periods.length || !slot.startTime) return;
+  if (!findPricePeriodForSlot(service, slot)) {
+    throw new BadRequestException(
+      'هذا الوقت خارج فترات العمل المحددة للمنشأة',
+    );
+  }
+}
+
+/** Resolve hourly price from service.attributes.pricePeriods for sports fields. */
+function unitPriceForSlot(
+  service: ServiceItem,
+  slot: ServiceAvailability,
+): number {
+  if (slot.customPrice != null && Number.isFinite(Number(slot.customPrice))) {
+    return Number(slot.customPrice);
+  }
+  const hit = findPricePeriodForSlot(service, slot);
+  if (hit) {
+    const price = Number(hit.pricePerHour ?? hit.price);
+    if (Number.isFinite(price)) return price;
+  }
+  return Number(service.basePrice) || 0;
 }

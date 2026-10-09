@@ -346,8 +346,23 @@ export function Facilities() {
                   <dt>Status</dt>
                   <dd>
                     <StatusPill status={draft.status} label={facilityStatusLabel[draft.status]} />
+                    {draft.status === 'SUSPENDED' ? (
+                      <span className="muted" style={{ display: 'block', marginTop: 6 }}>
+                        {draft.disabledBy === 'ADMIN'
+                          ? 'Blocked by admin — provider cannot re-enable.'
+                          : draft.disabledBy === 'PROVIDER'
+                            ? 'Provider self-disable — they can re-enable.'
+                            : 'Suspended.'}
+                      </span>
+                    ) : null}
                   </dd>
                 </div>
+                {draft.status === 'SUSPENDED' && draft.disableReason ? (
+                  <div>
+                    <dt>Disable reason</dt>
+                    <dd dir="auto">{draft.disableReason}</dd>
+                  </div>
+                ) : null}
                 <div>
                   <dt>Rooms</dt>
                   <dd>

@@ -13,6 +13,8 @@ import {
   CreateAvailabilityDto,
   CreateServiceDto,
   SeedAvailabilityDto,
+  SeedHourlyAvailabilityDto,
+  UpdateAvailabilityStatusDto,
   UpdateServiceDto,
 } from './dto/service.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -70,6 +72,22 @@ export class ServicesController {
   }
 
   @Roles(UserRole.PROVIDER, UserRole.ADMIN)
+  @Patch(':id/availabilities/:availabilityId/status')
+  updateAvailabilityStatus(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+    @Param('availabilityId') availabilityId: string,
+    @Body() dto: UpdateAvailabilityStatusDto,
+  ) {
+    return this.services.updateAvailabilityStatus(
+      user.id,
+      id,
+      availabilityId,
+      dto.status,
+    );
+  }
+
+  @Roles(UserRole.PROVIDER, UserRole.ADMIN)
   @Post(':id/availabilities/seed')
   seedAvailabilities(
     @CurrentUser() user: User,
@@ -77,5 +95,15 @@ export class ServicesController {
     @Body() dto: SeedAvailabilityDto,
   ) {
     return this.services.seedAvailabilities(user.id, id, dto);
+  }
+
+  @Roles(UserRole.PROVIDER, UserRole.ADMIN)
+  @Post(':id/availabilities/seed-hourly')
+  seedHourlyAvailabilities(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+    @Body() dto: SeedHourlyAvailabilityDto,
+  ) {
+    return this.services.seedHourlyAvailabilities(user.id, id, dto);
   }
 }

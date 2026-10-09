@@ -19,6 +19,7 @@ import { theme } from '../../core/ui/theme';
 import { formatServicePrice } from '../../core/common/currency';
 import { useApp } from '../../di/AppProvider';
 import { ProviderProfile } from '../../data/remote/providerApi';
+import type { FacilityReview } from '../../data/remote/reviewApi';
 import { OwnedService } from '../../data/remote/serviceApi';
 import { Booking } from '../../domain/model/Booking';
 import { RootStackParamList } from '../navigation/types';
@@ -28,9 +29,13 @@ import {
   statusColors,
   statusLabel,
 } from '../my_bookings/bookingUi';
+import {
+  ReviewCard,
+  StarsRow,
+} from './detail/RatingsSection';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ProviderFacility'>;
-type Tab = 'services' | 'bookings';
+type Tab = 'services' | 'bookings' | 'reviews';
 
 function providerStatusLabel(status?: string) {
   switch (status) {
@@ -57,24 +62,57 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
   const [tab, setTab] = useState<Tab>('services');
   const [services, setServices] = useState<OwnedService[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
+  const [reviews, setReviews] = useState<FacilityReview[]>([]);
+  const [reviewAverage, setReviewAverage] = useState(0);
+  const [reviewCount, setReviewCount] = useState(0);
   const [bookingQuery, setBookingQuery] = useState('');
   const [actionId, setActionId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [me, svc, bks] = await Promise.all([
+    const [me, svc, bks, reviewSummary] = await Promise.all([
       container.providerApi.getMineById(providerId),
       container.serviceApi.listMine(providerId),
       container.bookingRepository.listMine(),
+      container.reviewApi.summary(providerId).catch(() => ({
+        providerId,
+        count: 0,
+        average: 0,
+        reviews: [] as FacilityReview[],
+      })),
     ]);
 
-    // New rooms often have 0–1 nights open; calendar treats missing days as full.
+    // Keep calendars bookable: hourly for sports price-periods, all-day otherwise.
     const today = new Date().toISOString().slice(0, 10);
     let healed = false;
     for (const s of svc) {
-      const futureOpen = (s.availabilities ?? []).filter(
-        (a) => a.date >= today && (a.availableCapacity ?? 0) > 0,
+      const attrs = (s.attributes ?? {}) as Record<string, unknown>;
+      const hasPricePeriods =
+        Array.isArray(attrs.pricePeriods) && attrs.pricePeriods.length > 0;
+      const futureTimed = (s.availabilities ?? []).filter(
+        (a) =>
+          a.date >= today &&
+          !!a.startTime &&
+          (a.availableCapacity ?? 0) > 0,
       ).length;
-      if (futureOpen < 14) {
+      const futureAllDay = (s.availabilities ?? []).filter(
+        (a) =>
+          a.date >= today &&
+          !a.startTime &&
+          (a.availableCapacity ?? 0) > 0,
+      ).length;
+
+      if (hasPricePeriods) {
+        if (futureTimed < 20) {
+          await container.serviceApi.seedHourlyAvailabilities(s.id, {
+            days: 14,
+            totalCapacity: 1,
+          });
+          healed = true;
+        }
+        continue;
+      }
+
+      if (futureAllDay < 14) {
         const facilityUnits =
           typeof me.attributes?.inventory === 'number'
             ? me.attributes.inventory
@@ -101,6 +139,9 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
     setProvider(me);
     setServices(services);
     setBookings(bks.filter((b) => b.providerId === providerId));
+    setReviews(reviewSummary.reviews ?? []);
+    setReviewAverage(reviewSummary.average ?? 0);
+    setReviewCount(reviewSummary.count ?? 0);
   }, [container, providerId]);
 
   useFocusEffect(
@@ -187,11 +228,6 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
       },
     ]);
   };
-
-  const pendingCount = useMemo(
-    () => bookings.filter((b) => b.status === 'CONFIRMED').length,
-    [bookings],
-  );
 
   const filteredBookings = useMemo(() => {
     const q = bookingQuery.trim().toLowerCase();
@@ -303,10 +339,12 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
             <Text style={styles.statNum}>{bookings.length}</Text>
             <Text style={styles.statLabel}>حجوزات</Text>
           </View>
-          <View style={styles.stat}>
-            <Text style={styles.statNum}>{pendingCount}</Text>
-            <Text style={styles.statLabel}>مؤكدة</Text>
-          </View>
+          <Pressable style={styles.stat} onPress={() => setTab('reviews')}>
+            <Text style={styles.statNum}>
+              {reviewCount > 0 ? reviewAverage.toFixed(1) : '—'}
+            </Text>
+            <Text style={styles.statLabel}>التقييم</Text>
+          </Pressable>
         </View>
 
         <View style={styles.tabs}>
@@ -317,17 +355,28 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
             <Text style={[styles.tabText, tab === 'services' && styles.tabTextOn]}>
               {/فنادق|فندق|hotel/i.test(provider.category?.name ?? '')
                 ? 'الغرف'
-                : /شالي|chalet/i.test(provider.category?.name ?? '')
+                : /شالي|طيرمان|طرمان|chalet|tairaman/i.test(
+                      provider.category?.name ?? '',
+                    )
                   ? 'الباقات'
                   : 'الخدمات'}
-            </Text>
-          </Pressable>
+              </Text>
+            </Pressable>
           <Pressable
             style={[styles.tab, tab === 'bookings' && styles.tabOn]}
             onPress={() => setTab('bookings')}
           >
             <Text style={[styles.tabText, tab === 'bookings' && styles.tabTextOn]}>
               الحجوزات
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.tab, tab === 'reviews' && styles.tabOn]}
+            onPress={() => setTab('reviews')}
+          >
+            <Text style={[styles.tabText, tab === 'reviews' && styles.tabTextOn]}>
+              التقييمات
+              {reviewCount > 0 ? ` (${reviewCount})` : ''}
             </Text>
           </Pressable>
         </View>
@@ -344,7 +393,9 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
               <Text style={styles.addRowText}>
                 {/فنادق|فندق|hotel/i.test(provider.category?.name ?? '')
                   ? 'إضافة غرفة'
-                  : /شالي|chalet/i.test(provider.category?.name ?? '')
+                  : /شالي|طيرمان|طرمان|صالة|قاعة|صالات|قاعات|chalet|tairaman|hall|زفاف/i.test(
+                        provider.category?.name ?? '',
+                      )
                     ? 'إضافة باقة'
                     : 'إضافة خدمة'}
               </Text>
@@ -354,8 +405,10 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
               <Text style={styles.empty}>
                 {/فنادق|فندق|hotel/i.test(provider.category?.name ?? '')
                   ? 'لا توجد غرف — أضف غرفاً تظهر في صفحة التفاصيل.'
-                  : /شالي|chalet/i.test(provider.category?.name ?? '')
-                    ? 'لا توجد باقات — أضف باقات تظهر في قسم «الغرف والباقات».'
+                  : /شالي|طيرمان|طرمان|صالة|قاعة|صالات|قاعات|chalet|tairaman|hall|زفاف/i.test(
+                        provider.category?.name ?? '',
+                      )
+                    ? 'لا توجد باقات — أضف باقات تظهر في صفحة التفاصيل.'
                     : 'لا توجد خدمات — أضف خدمات تظهر في صفحة التفاصيل.'}
               </Text>
             ) : (
@@ -406,7 +459,7 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
               ))
             )}
           </View>
-        ) : (
+        ) : tab === 'bookings' ? (
           <View style={styles.section}>
             <Pressable
               style={styles.addRow}
@@ -526,6 +579,33 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
               })
             )}
           </View>
+        ) : (
+          <View style={styles.section}>
+            <View style={styles.reviewsSummary}>
+              <StarsRow rating={reviewCount > 0 ? reviewAverage : 0} size={20} />
+              <Text style={styles.reviewsAvg}>
+                {reviewCount > 0
+                  ? `${reviewAverage.toFixed(1)} من 5 · ${reviewCount} تقييم`
+                  : 'لا توجد تقييمات بعد'}
+              </Text>
+              <Text style={styles.reviewsHint}>
+                تظهر هنا تقييمات وتعليقات العملاء بعد إكمال الحجز
+              </Text>
+            </View>
+
+            {reviews.length === 0 ? (
+              <Text style={styles.empty}>
+                لم يقيّم أي عميل هذه المنشأة بعد. عند إكمال الحجز يمكن للعميل
+                إرسال تقييم وتعليق.
+              </Text>
+            ) : (
+              <View style={styles.reviewsList}>
+                {reviews.map((r) => (
+                  <ReviewCard key={r.id} review={r} wide />
+                ))}
+              </View>
+            )}
+          </View>
         )}
       </ScrollView>
     </SafeAreaView>
@@ -613,12 +693,34 @@ const styles = StyleSheet.create({
   },
   tabOn: { backgroundColor: theme.colors.surface },
   tabText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
     color: theme.colors.textSecondary,
   },
   tabTextOn: { color: theme.colors.primary },
   section: { gap: 10 },
+  reviewsSummary: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: 16,
+    alignItems: 'center',
+    gap: 8,
+  },
+  reviewsAvg: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: theme.colors.primary,
+    textAlign: 'center',
+  },
+  reviewsHint: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  reviewsList: { gap: 10 },
   addRow: {
     flexDirection: 'row',
     alignItems: 'center',

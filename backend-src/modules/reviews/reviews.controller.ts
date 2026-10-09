@@ -11,7 +11,8 @@ import { UserRole } from '../../common/enums';
 export class ReviewsController {
   constructor(private readonly reviews: ReviewsService) {}
 
-  @Roles(UserRole.CUSTOMER, UserRole.ADMIN)
+  // Providers may also book as customers; ownership is enforced in the service.
+  @Roles(UserRole.CUSTOMER, UserRole.PROVIDER, UserRole.ADMIN)
   @Post('reviews')
   create(@CurrentUser() user: User, @Body() dto: CreateReviewDto) {
     return this.reviews.create(user, dto);

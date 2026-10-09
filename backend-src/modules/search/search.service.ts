@@ -5,9 +5,14 @@ import { City } from './entities/city.entity';
 import { Provider } from '../providers/entities/provider.entity';
 import { CategoriesService } from '../categories/categories.service';
 import { AvailabilityStatus, ProviderStatus, RecordStatus } from '../../common/enums';
+import { TtlCache } from '../../common/utils/ttl-cache';
+
+const SEARCH_RESULT_LIMIT = 100;
 
 @Injectable()
 export class SearchService {
+  private readonly destinationsCache = new TtlCache<City[]>(120_000);
+
   constructor(
     @InjectRepository(City)
     private readonly cities: Repository<City>,
@@ -16,12 +21,15 @@ export class SearchService {
     private readonly categories: CategoriesService,
   ) {}
 
-  destinations() {
-    return this.cities.find({
+  async destinations() {
+    const cached = this.destinationsCache.get();
+    if (cached) return cached;
+    const rows = await this.cities.find({
       where: { status: RecordStatus.ACTIVE },
       relations: ['regions'],
       order: { name: 'ASC' },
     });
+    return this.destinationsCache.set(rows);
   }
 
   async search(query: {
@@ -99,6 +107,9 @@ export class SearchService {
       );
     }
 
-    return qb.orderBy('provider.businessName', 'ASC').getMany();
+    return qb
+      .orderBy('provider.businessName', 'ASC')
+      .take(SEARCH_RESULT_LIMIT)
+      .getMany();
   }
 }

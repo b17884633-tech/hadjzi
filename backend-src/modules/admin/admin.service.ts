@@ -252,6 +252,22 @@ export class AdminService {
 
     const previous = provider.status;
     provider.status = dto.status;
+    const attrs = {
+      ...(provider.attributes ?? {}),
+    } as Record<string, unknown>;
+    if (dto.status === ProviderStatus.SUSPENDED) {
+      attrs.disabledBy = 'ADMIN';
+      delete attrs.disableReason;
+      attrs.disabledAt = new Date().toISOString();
+    } else if (
+      dto.status === ProviderStatus.APPROVED ||
+      dto.status === ProviderStatus.PENDING_REVIEW
+    ) {
+      delete attrs.disabledBy;
+      delete attrs.disableReason;
+      delete attrs.disabledAt;
+    }
+    provider.attributes = attrs;
     await this.providers.save(provider);
 
     if (previous !== dto.status) {
@@ -681,6 +697,12 @@ export class AdminService {
         typeof attrs.insuranceMeta === 'string' ? attrs.insuranceMeta : null,
       insuranceNote:
         typeof attrs.insuranceNote === 'string' ? attrs.insuranceNote : null,
+      disabledBy:
+        attrs.disabledBy === 'ADMIN' || attrs.disabledBy === 'PROVIDER'
+          ? attrs.disabledBy
+          : null,
+      disableReason:
+        typeof attrs.disableReason === 'string' ? attrs.disableReason : null,
       status: provider.status,
       images: provider.images ?? [],
       services: (provider.services ?? []).map((service) => ({
@@ -714,21 +736,29 @@ export class AdminService {
   }
 
   private mapDispute(dispute: Dispute) {
-    const reason = dispute.reason?.trim() || '';
+    const raw = dispute.reason?.trim() || '';
+    const facilityDisable = parseFacilityDisableComplaint(raw);
+    const reason = facilityDisable?.message ?? raw;
+    const facilityName =
+      facilityDisable?.facilityName ??
+      dispute.booking?.provider?.businessName ??
+      null;
     return {
       id: dispute.id,
       bookingId: dispute.bookingId,
       bookingNumber: dispute.booking?.bookingNumber ?? null,
-      facilityName: dispute.booking?.provider?.businessName ?? null,
+      facilityName,
       userId: dispute.raisedBy,
       userName: dispute.raiser
         ? `${dispute.raiser.firstName} ${dispute.raiser.lastName}`.trim()
         : null,
-      subject: reason
-        ? reason.slice(0, 80)
-        : dispute.bookingId
-          ? 'Booking complaint'
-          : 'General feedback',
+      subject: facilityDisable
+        ? 'Facility disabled by provider'
+        : reason
+          ? reason.slice(0, 80)
+          : dispute.bookingId
+            ? 'Booking complaint'
+            : 'General feedback',
       message: reason,
       status: dispute.status,
       resolution: dispute.resolution,
@@ -780,6 +810,18 @@ function numberOrNull(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** `[FACILITY_DISABLE:uuid] Name\nreason` from provider self-disable. */
+function parseFacilityDisableComplaint(raw: string): {
+  facilityName: string | null;
+  message: string;
+} | null {
+  const m = raw.match(/^\[FACILITY_DISABLE:[^\]]+\]\s*([^\n]*)\n?([\s\S]*)$/);
+  if (!m) return null;
+  const facilityName = m[1]?.trim() || null;
+  const message = (m[2] ?? '').trim() || facilityName || raw;
+  return { facilityName, message };
+}
+
 function facilityStatusNotice(businessName: string, status: ProviderStatus) {
   const name = businessName.trim() || 'منشأتك';
   switch (status) {
@@ -796,7 +838,7 @@ function facilityStatusNotice(businessName: string, status: ProviderStatus) {
     case ProviderStatus.SUSPENDED:
       return {
         title: 'تم إيقاف منشأتك',
-        message: `تم إيقاف «${name}» مؤقتاً ولن تظهر في نتائج البحث حتى تتم إعادة تفعيلها.`,
+        message: `تم إيقاف «${name}» من الإدارة ولن تظهر في البحث حتى يعيد الأدمن تفعيلها.`,
       };
     case ProviderStatus.PENDING_REVIEW:
     default:

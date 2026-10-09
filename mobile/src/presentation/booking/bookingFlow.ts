@@ -1,3 +1,7 @@
+import type { PricePeriod } from '../../core/common/pricePeriods';
+
+export type { PricePeriod };
+
 export type BookingType = 'SLOT' | 'UNIT_DAY' | 'EVENT_DAY' | 'QUANTITY';
 
 export type AttendanceType =
@@ -40,14 +44,20 @@ export type BookingDraftParams = {
   image?: string;
   /** Max guests allowed per room/unit (from provider). Total = guestsPerRoom × rooms. */
   guestsPerRoom?: number;
+  /** Max children allowed per room (hotels). Total = maxChildrenPerRoom × rooms. */
+  maxChildrenPerRoom?: number;
   /** Chalet package period — drives single-day vs check-in/out range. */
   packagePeriod?: PackagePeriod;
   packageFromTime?: string;
   packageToTime?: string;
+  /** Sports / playground hourly price bands. */
+  pricePeriods?: PricePeriod[];
 };
 
 export type BookingCheckoutParams = BookingDraftParams & {
   availabilityId: string;
+  /** When the customer picks several periods on the same day. */
+  availabilityIds?: string[];
   bookingDate: string;
   startTime?: string | null;
   endTime?: string | null;
@@ -129,11 +139,11 @@ export function resolveBookingFlow(
     };
   }
 
-  if (/ملعب/i.test(cat)) {
+  if (/ملاعب|ملعب|كرة|بادل|رياض|padel|football|sport/i.test(cat)) {
     return {
       kind: 'SLOT_DURATION',
       bookingType: 'SLOT',
-      title: 'حجز الملعب',
+      title: /كرة/i.test(cat) ? 'حجز كرة قدم' : 'حجز الملعب',
       question: 'اختر اليوم ومدة الحجز',
       hint: 'حدد اليوم ثم وقت البدء والمدة بالساعات. الأيام غير المتاحة تظهر مشطوبة.',
       needsGuestStep: false,
@@ -222,37 +232,22 @@ export function resolveBookingFlow(
     };
   }
 
-  if (/صالة|قاعة/i.test(cat)) {
+  if (/صالة|قاعة|صالات|قاعات/i.test(cat)) {
     return {
       kind: 'DAY_PERIOD',
       bookingType: 'EVENT_DAY',
       title: 'حجز الصالات',
       question: 'في أي يوم تريد المناسبة؟',
-      hint: 'اختر تاريخ المناسبة ثم الفترة (صباحية / مسائية / يوم كامل).',
+      hint: 'اختر يوماً متاحاً — وقت الباقة يحدده مزود الخدمة في تفاصيل الباقة.',
       needsGuestStep: true,
       needsRooms: false,
       needsDuration: false,
       needsDeliveryTime: false,
       needsRoute: false,
-      periodOptions: ['فترة صباحية', 'فترة مسائية', 'يوم كامل'],
     };
   }
 
-  if (/طيرمان/i.test(cat)) {
-    return {
-      kind: 'DAY_PERIOD',
-      bookingType: 'UNIT_DAY',
-      title: 'حجز الطيرمانات',
-      question: 'اختر تاريخ الجلسة والفترة',
-      hint: 'حدد اليوم ثم فترة المَقيل أو المسائية للقفل الحصري.',
-      needsGuestStep: true,
-      needsRooms: false,
-      needsDuration: false,
-      needsDeliveryTime: false,
-      needsRoute: false,
-      periodOptions: ['مَقيل', 'فترة مسائية', 'يوم كامل'],
-    };
-  }
+  // طيرمانات / طرمانات use the same stay booking flow as chalets (below).
 
   if (/فنادق|فندق|غرف|hotel/i.test(cat)) {
     return {
@@ -291,8 +286,8 @@ export function resolveBookingFlow(
       kind: 'SLOT_TIME',
       bookingType: 'SLOT',
       title: `حجز ${cat || 'الموعد'}`,
-      question: 'اختر اليوم والوقت المناسب',
-      hint: 'اختر يوماً ثم حدد الموعد المتاح. الأيام غير المتاحة تظهر مشطوبة.',
+      question: 'اختر اليوم والموعد المناسب',
+      hint: 'اختر يوماً ثم حدد الموعد المتاح من قائمة الأوقات.',
       needsGuestStep: false,
       needsRooms: false,
       needsDuration: false,
@@ -337,7 +332,11 @@ export function resolveBookingFlow(
   return {
     kind: 'STAY_RANGE',
     bookingType: 'UNIT_DAY',
-    title: /شالي/i.test(cat) ? 'حجز الشاليهات' : `حجز ${cat || 'الخدمة'}`,
+    title: /طيرمان|طرمان/i.test(cat)
+      ? 'حجز الطيرمانات'
+      : /شالي/i.test(cat)
+        ? 'حجز الشاليهات'
+        : `حجز ${cat || 'الخدمة'}`,
     question: 'حدد تاريخ الوصول والمغادرة',
     hint: 'اضغط يوم الوصول ثم يوم المغادرة. الأيام غير المتاحة تظهر مشطوبة.',
     needsGuestStep: true,
@@ -415,6 +414,16 @@ export function guestsPerUnit(
   const raw = attributes?.maxGuests ?? attributes?.capacity ?? attributes?.guests;
   const n = typeof raw === 'number' ? raw : Number(raw);
   if (!Number.isFinite(n) || n <= 0) return undefined;
+  return Math.floor(n);
+}
+
+/** Provider-defined max children for one hotel room. */
+export function childrenPerUnit(
+  attributes?: Record<string, unknown> | null,
+): number | undefined {
+  const raw = attributes?.maxChildren ?? attributes?.childrenCapacity;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n) || n < 0) return undefined;
   return Math.floor(n);
 }
 

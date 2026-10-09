@@ -2,12 +2,13 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'crypto';
 import { Payment } from './entities/payment.entity';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto';
 import { BookingService } from '../booking/booking.service';
@@ -76,8 +77,11 @@ export class PaymentsService {
   }
 
   async handleWebhook(rawBody: Record<string, unknown>, signature?: string) {
-    const expected = this.config.get<string>('payment.webhookSecret');
-    if (expected && signature !== expected) {
+    const expected = this.config.get<string>('payment.webhookSecret') ?? '';
+    if (!expected || expected.includes('change-me')) {
+      throw new ServiceUnavailableException('Payment webhook is not configured');
+    }
+    if (!signature || !safeEqual(signature, expected)) {
       throw new UnauthorizedException('Invalid webhook signature');
     }
 
@@ -102,4 +106,11 @@ export class PaymentsService {
     }
     return payment;
   }
+}
+
+/** Length-safe constant-time compare for webhook secrets. */
+function safeEqual(a: string, b: string): boolean {
+  const ha = createHash('sha256').update(a).digest();
+  const hb = createHash('sha256').update(b).digest();
+  return timingSafeEqual(ha, hb);
 }

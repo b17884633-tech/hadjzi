@@ -37,15 +37,20 @@ import {
   getCurrency,
 } from '../../core/common/currency';
 import { formatNumber } from '../../core/common/format';
+import { parsePricePeriods } from '../../core/common/pricePeriods';
 import {
   guestsPerUnit,
+  childrenPerUnit,
   packagePeriodLabel,
   readPackagePeriod,
   resolveBookingFlow,
 } from '../booking/bookingFlow';
 import { visualForCategory } from '../home/categoryIcons';
 import { centerForCityName, coordsForProvider } from '../search/mapGeo';
+import type { FacilityReview } from '../../data/remote/reviewApi';
 import { DETAIL, buildDetailModel, PricePackage } from './detail/detailModel';
+import { PricePeriodsTicket } from './detail/PricePeriodsTicket';
+import { RatingsSection } from './detail/RatingsSection';
 import { HotelRoomsSheet } from './HotelRoomsSheet';
 
 type Route = RouteProp<RootStackParamList, 'ProviderProfile'>;
@@ -114,6 +119,7 @@ export function ProviderProfileScreen() {
   const [amenitiesExpanded, setAmenitiesExpanded] = useState(false);
   const [roomsOpen, setRoomsOpen] = useState(false);
   const [heroGalleryOpen, setHeroGalleryOpen] = useState(false);
+  const [reviews, setReviews] = useState<FacilityReview[]>([]);
 
   useEffect(() => {
     setLoading(true);
@@ -121,6 +127,7 @@ export function ProviderProfileScreen() {
     setPackagesRevealed(false);
     setAmenitiesExpanded(false);
     setRoomsOpen(false);
+    setReviews([]);
     container.providerApi
       .getProfile(providerId)
       .then(async (res) => {
@@ -129,12 +136,17 @@ export function ProviderProfileScreen() {
           const summary = await container.reviewApi.summary(providerId);
           p.rating = summary.count > 0 ? summary.average : undefined;
           p.reviewCount = summary.count;
+          setReviews(summary.reviews ?? []);
         } catch {
           p.rating = undefined;
           p.reviewCount = 0;
+          setReviews([]);
         }
         setProvider(p);
-        setSelectedPackageId(p.services?.[0]?.id ?? null);
+        const firstActive =
+          (p.services ?? []).find((s) => !s.status || s.status === 'ACTIVE') ??
+          null;
+        setSelectedPackageId(firstActive?.id ?? null);
       })
       .catch(() => undefined)
       .finally(() => setLoading(false));
@@ -177,14 +189,22 @@ export function ProviderProfileScreen() {
   }, [navigation, provider, user?.id]);
 
   const images = useMemo(() => (provider ? collectImages(provider) : []), [provider]);
+  const activeServices = useMemo(
+    () =>
+      (provider?.services ?? []).filter(
+        (s) => !s.status || s.status === 'ACTIVE',
+      ),
+    [provider?.services],
+  );
+
   const selectedService = useMemo(() => {
-    if (!provider?.services?.length) return null;
+    if (!activeServices.length) return null;
     return (
-      provider.services.find((s) => s.id === selectedPackageId) ??
-      provider.services[0] ??
+      activeServices.find((s) => s.id === selectedPackageId) ??
+      activeServices[0] ??
       null
     );
-  }, [provider, selectedPackageId]);
+  }, [activeServices, selectedPackageId]);
   const detail = useMemo(
     () => (provider ? buildDetailModel(provider, selectedService) : null),
     [provider, selectedService],
@@ -257,6 +277,10 @@ export function ProviderProfileScreen() {
     const toTime =
       pkg?.toTime ??
       (typeof attrs.toTime === 'string' ? String(attrs.toTime).slice(0, 5) : undefined);
+    const pricePeriods = parsePricePeriods(attrs.pricePeriods);
+    const minPeriodPrice = pricePeriods.length
+      ? Math.min(...pricePeriods.map((p) => p.pricePerHour))
+      : undefined;
     navigation.navigate('BookingDate', {
       providerId: provider.id,
       serviceId: service.id,
@@ -264,15 +288,24 @@ export function ProviderProfileScreen() {
       serviceName: pkg?.title ?? service.name,
       categoryName,
       bookingType,
-      price: pkg?.price ?? service.priceFrom ?? service.basePrice ?? 0,
+      price:
+        minPeriodPrice ??
+        pkg?.price ??
+        service.priceFrom ??
+        service.basePrice ??
+        0,
       depositPercentage: DEPOSIT_PERCENTAGE,
       capacityLabel: pkg?.capacityLabel,
       timeLabel: pkg?.timeLabel ?? packagePeriodLabel(packagePeriod),
       guestsPerRoom:
         guestsPerUnit(service.attributes) ?? guestsPerUnit(provider.attributes),
+      maxChildrenPerRoom:
+        childrenPerUnit(service.attributes) ??
+        childrenPerUnit(provider.attributes),
       packagePeriod,
       packageFromTime: fromTime,
       packageToTime: toTime,
+      pricePeriods: pricePeriods.length ? pricePeriods : undefined,
       image:
         service.images?.[0] ??
         service.imageUrl ??
@@ -290,6 +323,24 @@ export function ProviderProfileScreen() {
       return;
     }
 
+    if (detail.showPricePeriods) {
+      if (!packagesRevealed) {
+        scrollToPackages();
+        setPackagesRevealed(true);
+        return;
+      }
+      const service =
+        selectedService ??
+        activeServices.find((s) =>
+          parsePricePeriods(
+            ((s.attributes ?? {}) as Record<string, unknown>).pricePeriods,
+          ).length,
+        ) ??
+        cheapestService(provider);
+      if (service) startBooking(service);
+      return;
+    }
+
     if (detail.showPackages && detail.packages.length > 0) {
       if (!packagesRevealed) {
         scrollToPackages();
@@ -298,7 +349,7 @@ export function ProviderProfileScreen() {
       }
       const pkg = selectedPackage;
       const service =
-        (pkg && provider.services?.find((s) => s.id === pkg.id)) || selectedService;
+        (pkg && activeServices.find((s) => s.id === pkg.id)) || selectedService;
       if (service) startBooking(service, pkg ?? undefined);
       return;
     }
@@ -519,23 +570,11 @@ export function ProviderProfileScreen() {
           {detail.showRatingBanner ? (
             <>
               <View style={styles.divider} />
-              <LinearGradient
-                colors={[DETAIL.ratingCardStart, DETAIL.ratingCardEnd]}
-                start={{ x: 0, y: 0.5 }}
-                end={{ x: 1, y: 0.5 }}
-                style={styles.ratingBanner}
-              >
-                {/* RTL: first = right → value on right of stars */}
-                <Text style={styles.ratingBannerValue}>{ratingLabel}</Text>
-                <StarRow rating={hasReviews ? rating : 0} />
-                {hasReviews ? (
-                  <Text style={styles.ratingBannerCount}>
-                    {provider.reviewCount} تقييم
-                  </Text>
-                ) : (
-                  <Text style={styles.ratingBannerCount}>لا توجد تقييمات بعد</Text>
-                )}
-              </LinearGradient>
+              <RatingsSection
+                average={hasReviews ? rating : 0}
+                count={provider.reviewCount ?? 0}
+                reviews={reviews}
+              />
             </>
           ) : null}
 
@@ -556,18 +595,26 @@ export function ProviderProfileScreen() {
               {detail.insuranceMeta ? (
                 <Text style={styles.bodyStrong}>{detail.insuranceMeta}</Text>
               ) : null}
-              <Text style={styles.body}>{detail.insuranceNote}</Text>
+              {detail.insuranceNote?.trim() ? (
+                <Text style={styles.body}>{detail.insuranceNote}</Text>
+              ) : null}
             </>
           ) : null}
 
           {detail.showTerms ? (
             <>
               <View style={styles.divider} />
-              {detail.terms.map((t, i) => (
-                <Text key={`term-${i}`} style={styles.termLine}>
-                  {t}
-                </Text>
-              ))}
+              {detail.terms.map((t, i) => {
+                const raw = t.trim();
+                const labeled = /^\d+[\.\-\)]\s*/.test(raw)
+                  ? raw
+                  : `${i + 1}. ${raw}`;
+                return (
+                  <Text key={`term-${i}`} style={styles.termLine}>
+                    {labeled}
+                  </Text>
+                );
+              })}
               {detail.policyBullets.map((t, i) => (
                 <View key={`pol-${i}`} style={styles.bulletRow}>
                   <View style={styles.diamond} />
@@ -575,6 +622,20 @@ export function ProviderProfileScreen() {
                 </View>
               ))}
             </>
+          ) : null}
+
+          {detail.showPricePeriods ? (
+            <View
+              onLayout={(e) => {
+                packagesY.current = sheetY.current + e.nativeEvent.layout.y;
+              }}
+              style={styles.packagesSection}
+            >
+              <PricePeriodsTicket
+                periods={detail.pricePeriods}
+                currency={currency}
+              />
+            </View>
           ) : null}
 
           {detail.showPackages ? (
@@ -657,7 +718,7 @@ export function ProviderProfileScreen() {
         <HotelRoomsSheet
           visible={roomsOpen}
           onClose={() => setRoomsOpen(false)}
-          rooms={provider.services ?? []}
+          rooms={activeServices}
           fallbackImage={provider.images?.[0] ?? provider.logoUrl}
           currency={currency}
           onReserve={(room) => {
@@ -967,7 +1028,7 @@ const styles = StyleSheet.create({
   termLine: {
     fontSize: 14,
     lineHeight: 26,
-    color: DETAIL.text,
+    color: DETAIL.muted,
     marginBottom: 6,
     width: '100%',
     textAlign: 'right',
@@ -1061,7 +1122,7 @@ const styles = StyleSheet.create({
   packageAmount: {
     fontSize: 28,
     fontWeight: '800',
-    color: DETAIL.gold,
+    color: DETAIL.navy,
     letterSpacing: -0.3,
   },
   packageCurrency: {

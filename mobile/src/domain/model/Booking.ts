@@ -40,6 +40,8 @@ export interface Booking {
   temporaryLockUntil: string | null;
   customerNotes?: string | null;
   createdAt?: string;
+  /** Present when the customer already submitted a review for this booking. */
+  reviewId?: string | null;
   provider?: BookingProviderInfo | null;
   service?: BookingServiceInfo | null;
   customer?: BookingCustomerInfo | null;

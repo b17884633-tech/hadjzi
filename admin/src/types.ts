@@ -46,6 +46,9 @@ export type Facility = {
   insuranceAmount: number | null;
   insuranceMeta: string | null;
   insuranceNote: string | null;
+  /** Who suspended the facility — ADMIN lock vs PROVIDER self-disable. */
+  disabledBy?: 'ADMIN' | 'PROVIDER' | null;
+  disableReason?: string | null;
   status: FacilityStatus;
   images: string[];
   services: FacilityService[];

@@ -10,6 +10,8 @@ type Props = {
   onChange: (value?: number) => void;
   step?: number;
   min?: number;
+  /** Digits allowed in the input (default 6 — supports large capacities). */
+  maxLength?: number;
 };
 
 function toAsciiDigits(raw: string): string {
@@ -26,6 +28,7 @@ export function QuantityStepper({
   onChange,
   step = 1,
   min = 0,
+  maxLength = 6,
 }: Props) {
   const current = value ?? min;
   const [text, setText] = useState(String(current));
@@ -67,13 +70,25 @@ export function QuantityStepper({
         <TextInput
           style={styles.input}
           value={text}
-          onChangeText={(t) => setText(toAsciiDigits(t))}
+          onChangeText={(t) => {
+            const cleaned = toAsciiDigits(t);
+            setText(cleaned);
+            // Keep parent state in sync while typing (submit must not miss blur).
+            if (cleaned === '') {
+              onChange(min > 0 ? min : undefined);
+              return;
+            }
+            const n = parseInt(cleaned, 10);
+            if (Number.isFinite(n)) {
+              onChange(Math.max(min, n));
+            }
+          }}
           onBlur={() => commitText(text)}
           onSubmitEditing={() => commitText(text)}
           keyboardType="number-pad"
           selectTextOnFocus
           textAlign="center"
-          maxLength={4}
+          maxLength={maxLength}
         />
         <Pressable style={styles.btn} hitSlop={10} onPress={() => bump(-step)}>
           <Ionicons name="remove" size={20} color={theme.colors.primary} />

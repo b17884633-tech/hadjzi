@@ -21,7 +21,36 @@ export class ServiceAvailability {
   @Column({ name: 'service_id' })
   serviceId: string;
 
-  @Column({ type: 'date' })
+  /**
+   * Stored as PG DATE. TypeORM often hydrates as local-midnight Date, which
+   * serializes to the previous UTC calendar day (e.g. UTC+3 → T21:00Z).
+   */
+  @Column({
+    type: 'date',
+    transformer: {
+      to: (value: string | Date | null | undefined) => {
+        if (value == null) return value;
+        if (typeof value === 'string') return value.slice(0, 10);
+        return new Date(value.getTime() + 12 * 60 * 60 * 1000)
+          .toISOString()
+          .slice(0, 10);
+      },
+      from: (value: string | Date | null | undefined) => {
+        if (value == null) return value as unknown as string;
+        if (typeof value === 'string') {
+          if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+          if (/^\d{4}-\d{2}-\d{2}/.test(value) && !value.includes('T')) {
+            return value.slice(0, 10);
+          }
+        }
+        const d = value instanceof Date ? value : new Date(String(value));
+        if (Number.isNaN(d.getTime())) return String(value).slice(0, 10);
+        return new Date(d.getTime() + 12 * 60 * 60 * 1000)
+          .toISOString()
+          .slice(0, 10);
+      },
+    },
+  })
   date: string;
 
   @Column({ name: 'start_time', type: 'time', nullable: true })

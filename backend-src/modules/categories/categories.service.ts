@@ -4,21 +4,31 @@ import { Repository } from 'typeorm';
 import { Category } from './entities/category.entity';
 import { CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
 import { RecordStatus } from '../../common/enums';
+import { TtlCache } from '../../common/utils/ttl-cache';
 
 @Injectable()
 export class CategoriesService {
+  private readonly treeCache = new TtlCache<Category[]>(60_000);
+
   constructor(
     @InjectRepository(Category)
     private readonly categories: Repository<Category>,
   ) {}
 
   async tree(includeInactive = false) {
+    if (!includeInactive) {
+      const cached = this.treeCache.get();
+      if (cached) return cached;
+    }
+
     const where = includeInactive ? {} : { status: RecordStatus.ACTIVE };
     const all = await this.categories.find({
       where,
       order: { sortOrder: 'ASC', name: 'ASC' },
     });
-    return this.toTree(all, null);
+    const tree = this.toTree(all, null);
+    if (!includeInactive) this.treeCache.set(tree);
+    return tree;
   }
 
   async findById(id: number) {
@@ -32,7 +42,7 @@ export class CategoriesService {
     return category;
   }
 
-  create(dto: CreateCategoryDto) {
+  async create(dto: CreateCategoryDto) {
     const category = this.categories.create({
       name: dto.name,
       iconUrl: dto.iconUrl,
@@ -40,23 +50,29 @@ export class CategoriesService {
       bookingType: dto.bookingType,
       sortOrder: dto.sortOrder ?? 0,
     });
-    return this.categories.save(category);
+    const saved = await this.categories.save(category);
+    this.treeCache.clear();
+    return saved;
   }
 
   async update(id: number, dto: UpdateCategoryDto) {
     await this.findById(id);
     await this.categories.update(id, dto);
+    this.treeCache.clear();
     return this.findById(id);
   }
 
   async remove(id: number) {
     await this.findById(id);
     await this.categories.update(id, { status: RecordStatus.INACTIVE });
+    this.treeCache.clear();
     return { id, status: RecordStatus.INACTIVE };
   }
 
   async collectDescendantIds(categoryId: number): Promise<number[]> {
-    const all = await this.categories.find();
+    const all = await this.categories.find({
+      select: ['id', 'parentId'],
+    });
     const ids = [categoryId];
     const walk = (parentId: number) => {
       for (const node of all.filter((c) => c.parentId === parentId)) {

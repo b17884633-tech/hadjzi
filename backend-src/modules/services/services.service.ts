@@ -11,17 +11,19 @@ import {
   CreateAvailabilityDto,
   CreateServiceDto,
   SeedAvailabilityDto,
+  SeedHourlyAvailabilityDto,
   UpdateServiceDto,
 } from './dto/service.dto';
 import { ProvidersService } from '../providers/providers.service';
-import { RecordStatus } from '../../common/enums';
+import { AvailabilityStatus, RecordStatus } from '../../common/enums';
 import { PlatformSetting } from '../admin/entities/platform-setting.entity';
 import { DEFAULT_DEPOSIT_PERCENTAGE } from '../../common/constants/booking.constants';
 
 function toIsoDateOnly(d: Date): string {
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
+  // Local calendar day — avoids seeding “yesterday” in UTC+ timezones.
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
 
@@ -30,16 +32,86 @@ function parseIsoDate(iso: string): Date {
   return new Date(Date.UTC(y, m - 1, d));
 }
 
-/** Normalize pg date / Date / string into YYYY-MM-DD. */
+/** Normalize pg date / Date / string into YYYY-MM-DD (noon-shift avoids TZ off-by-one). */
 function dateKey(v: unknown): string {
-  if (v instanceof Date && !Number.isNaN(v.getTime())) {
-    return toIsoDateOnly(v);
+  if (v == null) return '';
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    if (/^\d{4}-\d{2}-\d{2}/.test(s) && !s.includes('T')) return s.slice(0, 10);
   }
-  const s = String(v ?? '');
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  const parsed = new Date(s);
-  if (!Number.isNaN(parsed.getTime())) return toIsoDateOnly(parsed);
-  return s.slice(0, 10);
+  const d = v instanceof Date ? v : new Date(String(v));
+  if (!Number.isNaN(d.getTime())) {
+    return new Date(d.getTime() + 12 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  }
+  return String(v).slice(0, 10);
+}
+
+function addDaysToIso(iso: string, days: number): string {
+  const d = new Date(`${iso.slice(0, 10)}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  return toIsoDateOnly(d);
+}
+
+function timeToMinutes(raw?: string | null): number | null {
+  if (!raw) return null;
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(raw).trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  const min = Number(m[2]);
+  if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
+  return h * 60 + min;
+}
+
+function hourInPricePeriods(
+  hour: number,
+  periods: unknown,
+): boolean {
+  if (!Array.isArray(periods) || !periods.length) return false;
+  const t = hour * 60;
+  for (const raw of periods) {
+    if (!raw || typeof raw !== 'object') continue;
+    const p = raw as Record<string, unknown>;
+    const from = timeToMinutes(
+      typeof p.fromTime === 'string' ? p.fromTime : null,
+    );
+    const to = timeToMinutes(typeof p.toTime === 'string' ? p.toTime : null);
+    if (from == null || to == null) continue;
+    const inBand = to > from ? t >= from && t < to : t >= from || t < to;
+    if (inBand) return true;
+  }
+  return false;
+}
+
+/** Prefer explicit hours → pricePeriods on the service → startHour..endHour. */
+function resolveSeedHours(
+  dto: SeedHourlyAvailabilityDto,
+  attributes: Record<string, unknown> | null | undefined,
+): number[] {
+  if (Array.isArray(dto.hours) && dto.hours.length) {
+    return [
+      ...new Set(
+        dto.hours
+          .map((h) => Math.floor(Number(h)))
+          .filter((h) => Number.isFinite(h) && h >= 0 && h <= 23),
+      ),
+    ].sort((a, b) => a - b);
+  }
+
+  const periods = (attributes ?? {}).pricePeriods;
+  if (Array.isArray(periods) && periods.length) {
+    const covered: number[] = [];
+    for (let h = 0; h < 24; h++) {
+      if (hourInPricePeriods(h, periods)) covered.push(h);
+    }
+    if (covered.length) return covered;
+  }
+
+  const startHour = dto.startHour ?? 8;
+  const endHour = dto.endHour ?? 22;
+  const hours: number[] = [];
+  for (let h = startHour; h < endHour; h++) hours.push(h);
+  return hours;
 }
 
 @Injectable()
@@ -104,14 +176,79 @@ export class ServicesService {
   }
 
   async findPublic(id: string) {
-    const item = await this.services.findOne({
+    let item = await this.services.findOne({
       where: { id, status: RecordStatus.ACTIVE },
       relations: ['provider', 'category', 'availabilities'],
     });
     if (!item) {
       throw new NotFoundException('Service not found');
     }
+
+    // Sports packages: ensure bookable hourly slots exist for the price windows.
+    const healed = await this.ensureHourlySlotsForService(item);
+    if (healed) {
+      item = await this.services.findOne({
+        where: { id, status: RecordStatus.ACTIVE },
+        relations: ['provider', 'category', 'availabilities'],
+      });
+      if (!item) {
+        throw new NotFoundException('Service not found');
+      }
+    }
+
+    // Always expose calendar dates as YYYY-MM-DD strings.
+    for (const row of item.availabilities ?? []) {
+      row.date = dateKey(row.date);
+    }
     return item;
+  }
+
+  /** Insert missing hourly rows from attributes.pricePeriods (no-op if none). */
+  private async ensureHourlySlotsForService(service: ServiceItem): Promise<boolean> {
+    const attrs = (service.attributes ?? {}) as Record<string, unknown>;
+    const periods = attrs.pricePeriods;
+    if (!Array.isArray(periods) || periods.length === 0) return false;
+
+    const hours = resolveSeedHours({}, attrs);
+    if (!hours.length) return false;
+
+    const today = toIsoDateOnly(new Date());
+    const futureTimed = (service.availabilities ?? []).filter((a) => {
+      const d = dateKey(a.date);
+      return !!a.startTime && d >= today;
+    }).length;
+    // Need several days × hours to feel bookable in the strip.
+    if (futureTimed >= hours.length * 7) return false;
+
+    const days = 14;
+    let inserted = 0;
+    for (let d = 0; d < days; d++) {
+      const iso = addDaysToIso(today, d);
+      for (const h of hours) {
+        const startTime = `${String(h).padStart(2, '0')}:00:00`;
+        const endTime = `${String(h + 1).padStart(2, '0')}:00:00`;
+        const exists = await this.availabilities
+          .createQueryBuilder('a')
+          .where('a.service_id = :serviceId', { serviceId: service.id })
+          .andWhere('a.date = :iso', { iso })
+          .andWhere('a.start_time = :startTime', { startTime })
+          .getOne();
+        if (exists) continue;
+        await this.availabilities.save(
+          this.availabilities.create({
+            serviceId: service.id,
+            date: iso,
+            startTime,
+            endTime,
+            totalCapacity: 1,
+            availableCapacity: 1,
+            status: AvailabilityStatus.AVAILABLE,
+          }),
+        );
+        inserted += 1;
+      }
+    }
+    return inserted > 0;
   }
 
   private async ownedService(userId: string, serviceId: string) {
@@ -164,16 +301,93 @@ export class ServicesService {
   ) {
     await this.ownedService(userId, serviceId);
     const totalCapacity = dto.totalCapacity ?? 1;
+    const blocked = dto.status === 'BLOCKED';
     const row = this.availabilities.create({
       serviceId,
       date: dto.date,
       startTime: dto.startTime ?? null,
       endTime: dto.endTime ?? null,
       totalCapacity,
-      availableCapacity: totalCapacity,
+      availableCapacity: blocked ? 0 : totalCapacity,
       customPrice: dto.customPrice ?? null,
+      status: blocked
+        ? AvailabilityStatus.BLOCKED
+        : AvailabilityStatus.AVAILABLE,
     });
     return this.availabilities.save(row);
+  }
+
+  async updateAvailabilityStatus(
+    userId: string,
+    serviceId: string,
+    availabilityId: string,
+    status: 'AVAILABLE' | 'BLOCKED',
+  ) {
+    await this.ownedService(userId, serviceId);
+    const row = await this.availabilities.findOne({
+      where: { id: availabilityId, serviceId },
+    });
+    if (!row) throw new NotFoundException('Availability not found');
+
+    if (status === 'BLOCKED') {
+      row.status = AvailabilityStatus.BLOCKED;
+      row.availableCapacity = 0;
+    } else {
+      row.status = AvailabilityStatus.AVAILABLE;
+      row.availableCapacity = Math.max(1, row.totalCapacity);
+    }
+    return this.availabilities.save(row);
+  }
+
+  async seedHourlyAvailabilities(
+    userId: string,
+    serviceId: string,
+    dto: SeedHourlyAvailabilityDto,
+  ) {
+    const service = await this.ownedService(userId, serviceId);
+    const days = dto.days ?? 14;
+    const totalCapacity = dto.totalCapacity ?? 1;
+    const startHour = dto.startHour ?? 8;
+    const endHour = dto.endHour ?? 22;
+    const startIso = (dto.fromDate ?? toIsoDateOnly(new Date())).slice(0, 10);
+
+    const hours = resolveSeedHours(dto, service.attributes);
+
+    let inserted = 0;
+    for (let d = 0; d < days; d++) {
+      const iso = addDaysToIso(startIso, d);
+      for (const h of hours) {
+        const startTime = `${String(h).padStart(2, '0')}:00:00`;
+        const endTime = `${String(h + 1).padStart(2, '0')}:00:00`;
+        const exists = await this.availabilities
+          .createQueryBuilder('a')
+          .where('a.service_id = :serviceId', { serviceId })
+          .andWhere('a.date = :iso', { iso })
+          .andWhere('a.start_time = :startTime', { startTime })
+          .getOne();
+        if (exists) continue;
+        await this.availabilities.save(
+          this.availabilities.create({
+            serviceId,
+            date: iso,
+            startTime,
+            endTime,
+            totalCapacity,
+            availableCapacity: totalCapacity,
+            status: AvailabilityStatus.AVAILABLE,
+          }),
+        );
+        inserted += 1;
+      }
+    }
+    return {
+      inserted,
+      days,
+      startHour: hours[0] ?? startHour,
+      endHour: (hours[hours.length - 1] ?? endHour - 1) + 1,
+      hours,
+      totalCapacity,
+    };
   }
 
   async seedAvailabilities(

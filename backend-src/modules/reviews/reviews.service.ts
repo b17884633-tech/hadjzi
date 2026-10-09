@@ -45,17 +45,38 @@ export class ReviewsService {
   async forProvider(providerId: string) {
     return this.reviews.find({
       where: { providerId },
+      relations: ['customer'],
       order: { createdAt: 'DESC' },
     });
   }
 
   async summary(providerId: string) {
     const rows = await this.forProvider(providerId);
-    if (rows.length === 0) {
+    const reviews = rows.map((r) => ({
+      id: r.id,
+      bookingId: r.bookingId,
+      rating: r.rating,
+      comment: r.comment,
+      createdAt: r.createdAt,
+      customerName: customerDisplayName(r.customer),
+      customerId: r.customerId,
+    }));
+    if (reviews.length === 0) {
       return { providerId, count: 0, average: 0, reviews: [] };
     }
     const average =
-      Math.round((rows.reduce((sum, r) => sum + r.rating, 0) / rows.length) * 10) / 10;
-    return { providerId, count: rows.length, average, reviews: rows };
+      Math.round(
+        (reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length) * 10,
+      ) / 10;
+    return { providerId, count: reviews.length, average, reviews };
   }
+}
+
+function customerDisplayName(
+  customer?: { firstName?: string; lastName?: string } | null,
+): string {
+  const first = customer?.firstName?.trim() ?? '';
+  const last = customer?.lastName?.trim() ?? '';
+  const full = `${first} ${last}`.trim();
+  return full || 'عميل';
 }

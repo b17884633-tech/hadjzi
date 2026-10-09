@@ -9,6 +9,7 @@ import {
   type Ref,
 } from 'react';
 import {
+  Dimensions,
   findNodeHandle,
   Keyboard,
   KeyboardAvoidingView,
@@ -38,11 +39,9 @@ export type KeyboardAwareScrollViewProps = ScrollViewProps & {
   avoidStyle?: StyleProp<ViewStyle>;
 };
 
-type ScrollResponder = {
-  scrollResponderScrollNativeHandleToKeyboard?: (
-    nodeHandle: number,
-    additionalOffset: number,
-    preventNegativeScrollOffset: boolean,
+type Measureable = {
+  measureInWindow: (
+    callback: (x: number, y: number, width: number, height: number) => void,
   ) => void;
 };
 
@@ -55,6 +54,35 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
 function basePaddingBottom(style: StyleProp<ViewStyle> | undefined): number {
   const flat = StyleSheet.flatten(style) ?? {};
   return typeof flat.paddingBottom === 'number' ? flat.paddingBottom : 0;
+}
+
+function measureInWindow(target: unknown): Promise<{
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} | null> {
+  return new Promise((resolve) => {
+    if (
+      target &&
+      typeof (target as Measureable).measureInWindow === 'function'
+    ) {
+      (target as Measureable).measureInWindow((x, y, width, height) => {
+        resolve({ x, y, width, height });
+      });
+      return;
+    }
+
+    const handle = findNodeHandle(target as never);
+    if (handle == null) {
+      resolve(null);
+      return;
+    }
+
+    UIManager.measureInWindow(handle, (x, y, width, height) => {
+      resolve({ x, y, width, height });
+    });
+  });
 }
 
 /**
@@ -75,12 +103,16 @@ export const KeyboardAwareScrollView = forwardRef<
     keyboardShouldPersistTaps = 'handled',
     keyboardDismissMode = Platform.OS === 'ios' ? 'interactive' : 'on-drag',
     onScroll,
+    onContentSizeChange,
     ...rest
   },
   ref,
 ) {
   const scrollRef = useRef<ScrollView | null>(null);
   const scrollY = useRef(0);
+  const keyboardTopRef = useRef<number | null>(null);
+  const keyboardHeightRef = useRef(0);
+  const focusedRef = useRef<unknown>(null);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const setRefs = useCallback(
@@ -91,61 +123,80 @@ export const KeyboardAwareScrollView = forwardRef<
     [ref],
   );
 
-  const scrollFocusedIntoView = useCallback(() => {
+  const scrollFocusedIntoView = useCallback(async () => {
     const scroll = scrollRef.current;
     if (!scroll) return;
 
-    const focused = TextInput.State.currentlyFocusedInput?.();
+    const focused = TextInput.State.currentlyFocusedInput?.() ?? null;
     if (!focused) return;
+    focusedRef.current = focused;
 
-    const inputHandle = findNodeHandle(focused as never);
-    if (inputHandle == null) return;
+    const [inputBox, scrollBox] = await Promise.all([
+      measureInWindow(focused),
+      measureInWindow(scroll),
+    ]);
+    if (!inputBox || !scrollBox) return;
 
-    const responder = (
-      scroll as ScrollView & { getScrollResponder?: () => ScrollResponder }
-    ).getScrollResponder?.();
+    const windowH = Dimensions.get('window').height;
+    // Prefer live keyboard top from the event. Falls back to window bottom
+    // when the keyboard is closed / unknown.
+    const keyboardTop = keyboardTopRef.current ?? windowH;
+    // Visible area is the scroll viewport clipped by the keyboard overlay.
+    // (adjustResize shrinks the viewport; overlay mode leaves it full-height.)
+    const visibleBottom =
+      Math.min(scrollBox.y + scrollBox.height, keyboardTop) - bottomOffset;
+    const visibleTop = scrollBox.y + 12;
+    const inputBottom = inputBox.y + inputBox.height;
+    const inputTop = inputBox.y;
 
-    if (responder?.scrollResponderScrollNativeHandleToKeyboard) {
-      responder.scrollResponderScrollNativeHandleToKeyboard(
-        inputHandle,
-        bottomOffset,
-        true,
-      );
+    if (inputBottom > visibleBottom + 2) {
+      const overflow = inputBottom - visibleBottom;
+      scroll.scrollTo({
+        y: Math.max(0, scrollY.current + overflow + 16),
+        animated: true,
+      });
       return;
     }
 
-    const scrollHandle = findNodeHandle(scroll);
-    if (scrollHandle == null) return;
-
-    UIManager.measureInWindow(inputHandle, (_ix, iy, _iw, ih) => {
-      UIManager.measureInWindow(scrollHandle, (_sx, sy, _sw, sh) => {
-        const visibleBottom = sy + sh - bottomOffset;
-        const inputBottom = iy + ih;
-        const overflow = inputBottom - visibleBottom;
-        if (overflow > 8) {
-          scroll.scrollTo({
-            y: Math.max(0, scrollY.current + overflow + 20),
-            animated: true,
-          });
-        }
+    if (inputTop < visibleTop) {
+      scroll.scrollTo({
+        y: Math.max(0, scrollY.current - (visibleTop - inputTop)),
+        animated: true,
       });
-    });
+    }
   }, [bottomOffset]);
 
+  const scheduleScrollIntoView = useCallback(() => {
+    // Footer hide / padding / resize settle at different times on Android.
+    const delays =
+      Platform.OS === 'ios' ? [40, 120, 280] : [60, 160, 320, 480];
+    for (const delay of delays) {
+      setTimeout(() => {
+        void scrollFocusedIntoView();
+      }, delay);
+    }
+  }, [scrollFocusedIntoView]);
+
   useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showEvent =
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent =
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
 
     const showSub = Keyboard.addListener(showEvent, (e) => {
       const height = e.endCoordinates?.height ?? 0;
+      const screenY = e.endCoordinates?.screenY;
+      keyboardHeightRef.current = height;
+      keyboardTopRef.current =
+        typeof screenY === 'number' ? screenY : Dimensions.get('window').height - height;
       setKeyboardHeight(height);
-      // Wait for padding layout, then scroll the focused field into view.
-      const delay = Platform.OS === 'ios' ? 80 : 160;
-      setTimeout(scrollFocusedIntoView, delay);
-      setTimeout(scrollFocusedIntoView, delay + 120);
+      scheduleScrollIntoView();
     });
 
     const hideSub = Keyboard.addListener(hideEvent, () => {
+      keyboardHeightRef.current = 0;
+      keyboardTopRef.current = null;
+      focusedRef.current = null;
       setKeyboardHeight(0);
     });
 
@@ -153,7 +204,21 @@ export const KeyboardAwareScrollView = forwardRef<
       showSub.remove();
       hideSub.remove();
     };
-  }, [scrollFocusedIntoView]);
+  }, [scheduleScrollIntoView]);
+
+  // Field switches while the keyboard stays open do not re-fire show events.
+  useEffect(() => {
+    if (keyboardHeight <= 0) return undefined;
+
+    const id = setInterval(() => {
+      const focused = TextInput.State.currentlyFocusedInput?.() ?? null;
+      if (!focused || focused === focusedRef.current) return;
+      focusedRef.current = focused;
+      scheduleScrollIntoView();
+    }, 200);
+
+    return () => clearInterval(id);
+  }, [keyboardHeight, scheduleScrollIntoView]);
 
   const handleScroll = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -163,9 +228,19 @@ export const KeyboardAwareScrollView = forwardRef<
     [onScroll],
   );
 
+  const handleContentSizeChange = useCallback(
+    (w: number, h: number) => {
+      onContentSizeChange?.(w, h);
+      if (keyboardHeightRef.current > 0) {
+        void scrollFocusedIntoView();
+      }
+    },
+    [onContentSizeChange, scrollFocusedIntoView],
+  );
+
   const mergedContentStyle = useMemo(() => {
     if (keyboardHeight <= 0) return contentContainerStyle;
-    // Keyboard open: add enough bottom space so the last field can scroll up.
+    // Extra bottom space so the last field can scroll above the keyboard.
     return [
       contentContainerStyle,
       {
@@ -185,6 +260,7 @@ export const KeyboardAwareScrollView = forwardRef<
       contentContainerStyle={mergedContentStyle}
       showsVerticalScrollIndicator={false}
       onScroll={handleScroll}
+      onContentSizeChange={handleContentSizeChange}
       scrollEventThrottle={16}
       {...rest}
     >

@@ -105,7 +105,7 @@ export function defaultPromosForCategory(categoryName?: string | null): PromoSli
       },
     ]);
   }
-  if (/ملعب|رياض|بادل|كرة/i.test(name)) {
+  if (/ملاعب|ملعب|رياض|بادل|كرة/i.test(name)) {
     return pack([
       {
         title: 'احجز ملعبك الآن',

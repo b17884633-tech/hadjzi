@@ -65,14 +65,31 @@ function toNum(v: number | string | null | undefined): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function normalizeDate(raw: string): string {
-  return raw.slice(0, 10);
+/**
+ * PG `date` often arrives as midnight local → ISO previous-day UTC
+ * (e.g. 2026-10-08 → 2026-10-07T21:00:00.000Z in UTC+3).
+ * Noon-shift recovers the calendar day; plain YYYY-MM-DD is kept as-is.
+ */
+function normalizeDate(raw: unknown): string {
+  if (raw == null) return '';
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+    if (/^\d{4}-\d{2}-\d{2}/.test(trimmed) && !trimmed.includes('T')) {
+      return trimmed.slice(0, 10);
+    }
+  }
+  const d = raw instanceof Date ? raw : new Date(String(raw));
+  if (!Number.isNaN(d.getTime())) {
+    return new Date(d.getTime() + 12 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  }
+  return String(raw).slice(0, 10);
 }
 
 function mapAvailabilities(raw: ApiAvailability[] | undefined): ServiceAvailability[] {
   return (raw ?? []).map((a) => ({
     id: a.id,
-    date: normalizeDate(String(a.date)),
+    date: normalizeDate(a.date),
     startTime: a.startTime ?? null,
     endTime: a.endTime ?? null,
     availableCapacity: toNum(a.availableCapacity) ?? 0,
@@ -106,10 +123,35 @@ export class ServiceApi {
     const response = await this.client.get<ApiSuccessResponse<ApiServiceDetail>>(
       `/services/${id}`,
     );
-    const raw = response.data.data;
-    const availabilities = mapAvailabilities(raw.availabilities).filter(
-      (a) => a.availableCapacity > 0 && a.status !== 'BLOCKED',
+    const envelope = response.data;
+    const raw =
+      envelope &&
+      typeof envelope === 'object' &&
+      'data' in envelope &&
+      envelope.data &&
+      typeof envelope.data === 'object'
+        ? envelope.data
+        : (envelope as unknown as ApiServiceDetail);
+    if (!raw?.id) {
+      throw new Error('تعذر تحميل مواعيد الخدمة');
+    }
+    const availabilities = mapAvailabilities(raw.availabilities ?? []).filter(
+      (a) =>
+        a.availableCapacity > 0 &&
+        a.status !== 'BLOCKED' &&
+        a.status !== 'SOLD_OUT',
     );
+
+    if (__DEV__) {
+      console.log(
+        '[getService]',
+        raw.id,
+        'slots=',
+        availabilities.length,
+        'dates=',
+        new Set(availabilities.map((a) => a.date)).size,
+      );
+    }
 
     return {
       id: raw.id,
@@ -162,11 +204,24 @@ export class ServiceApi {
       endTime?: string;
       totalCapacity?: number;
       customPrice?: number;
+      status?: 'AVAILABLE' | 'BLOCKED';
     },
   ) {
     const response = await this.client.post(
       `/services/${serviceId}/availabilities`,
       payload,
+    );
+    return response.data;
+  }
+
+  async updateAvailabilityStatus(
+    serviceId: string,
+    availabilityId: string,
+    status: 'AVAILABLE' | 'BLOCKED',
+  ) {
+    const response = await this.client.patch(
+      `/services/${serviceId}/availabilities/${availabilityId}/status`,
+      { status },
     );
     return response.data;
   }
@@ -180,5 +235,39 @@ export class ServiceApi {
       data?: { inserted: number; days: number; totalCapacity: number };
     }>(`/services/${serviceId}/availabilities/seed`, payload);
     return response.data?.data ?? { inserted: 0, days: payload.days ?? 90, totalCapacity: payload.totalCapacity ?? 1 };
+  }
+
+  /** Seed hourly periods for fields / clinics. */
+  async seedHourlyAvailabilities(
+    serviceId: string,
+    payload: {
+      fromDate?: string;
+      days?: number;
+      startHour?: number;
+      endHour?: number;
+      hours?: number[];
+      totalCapacity?: number;
+    } = {},
+  ) {
+    const response = await this.client.post<{
+      data?: {
+        inserted: number;
+        days: number;
+        startHour: number;
+        endHour: number;
+        hours?: number[];
+        totalCapacity: number;
+      };
+    }>(`/services/${serviceId}/availabilities/seed-hourly`, payload);
+    return (
+      response.data?.data ?? {
+        inserted: 0,
+        days: payload.days ?? 14,
+        startHour: payload.startHour ?? 8,
+        endHour: payload.endHour ?? 22,
+        hours: payload.hours,
+        totalCapacity: payload.totalCapacity ?? 1,
+      }
+    );
   }
 }

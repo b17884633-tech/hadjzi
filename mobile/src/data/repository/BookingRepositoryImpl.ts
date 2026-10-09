@@ -34,6 +34,12 @@ function mapBooking(raw: Record<string, unknown>): Booking {
     temporaryLockUntil: (raw.temporaryLockUntil as string | null) ?? null,
     customerNotes: (raw.customerNotes as string | null) ?? null,
     createdAt: raw.createdAt ? String(raw.createdAt) : undefined,
+    reviewId: (() => {
+      const review = raw.review as { id?: string } | null | undefined;
+      if (review?.id) return String(review.id);
+      if (raw.reviewId != null) return String(raw.reviewId);
+      return null;
+    })(),
     provider: provider
       ? {
           id: String(provider.id),

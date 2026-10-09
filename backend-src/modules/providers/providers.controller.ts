@@ -13,7 +13,7 @@ import { User } from '../users/entities/user.entity';
 import { Public } from '../../common/decorators/public.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { ProviderStatus, UserRole } from '../../common/enums';
-import { IsBoolean, IsEnum } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 class ReviewProviderBody {
   @IsEnum([
@@ -27,6 +27,13 @@ class ReviewProviderBody {
 class SetEnabledBody {
   @IsBoolean()
   enabled: boolean;
+
+  /** Required when disabling — why the provider is hiding the facility. */
+  @IsOptional()
+  @IsString()
+  @MinLength(5)
+  @MaxLength(1000)
+  reason?: string;
 }
 
 @Controller('providers')
@@ -67,7 +74,7 @@ export class ProvidersController {
     @Param('id') id: string,
     @Body() body: SetEnabledBody,
   ) {
-    return this.providers.setEnabled(user.id, id, body.enabled);
+    return this.providers.setEnabled(user.id, id, body.enabled, body.reason);
   }
 
   /** Legacy: updates the first facility. Prefer PATCH /providers/me/:id */
