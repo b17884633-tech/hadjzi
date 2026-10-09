@@ -45,7 +45,7 @@ export class ProvidersController {
     return this.providers.createForUser(user.id, dto);
   }
 
-  @Roles(UserRole.PROVIDER, UserRole.ADMIN)
+  /** Any logged-in user — customers get [] until they create a facility. */
   @Get('me')
   me(@CurrentUser() user: User) {
     return this.providers.listMine(user.id);

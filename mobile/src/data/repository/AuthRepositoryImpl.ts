@@ -79,7 +79,18 @@ export class AuthRepositoryImpl implements AuthRepository {
   }
 
   async getCurrentUser(): Promise<User | null> {
-    return getUserSession();
+    const [token, session] = await Promise.all([
+      getAccessToken(),
+      getUserSession(),
+    ]);
+    // Session without token (e.g. after JWT secret rotation) → treat as logged out
+    if (!token || !session) {
+      if (token || session) {
+        await this.logout();
+      }
+      return null;
+    }
+    return session;
   }
 
   async isAuthenticated(): Promise<boolean> {

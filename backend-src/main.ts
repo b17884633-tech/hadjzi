@@ -23,8 +23,10 @@ function assertProductionSecrets(): void {
       'JWT_SECRET must be a strong random value (32+ chars) in production',
     );
   }
+  // Never echo OTP codes in production responses (even if env was left as true).
   if (process.env.OTP_DEV_ECHO === 'true') {
-    throw new Error('OTP_DEV_ECHO must be false in production');
+    logger.warn('OTP_DEV_ECHO=true ignored in production — codes will not be returned in API');
+    process.env.OTP_DEV_ECHO = 'false';
   }
   if (
     !process.env.PAYMENT_WEBHOOK_SECRET ||

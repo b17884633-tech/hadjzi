@@ -56,10 +56,13 @@ export function ProviderHomeScreen() {
         setUser(next);
       }
     } catch (e) {
-      // Not a provider yet or API error — empty list is fine for first-time
+      // Not a provider yet — empty list is fine for first-time
       const status = (e as { response?: { status?: number } })?.response?.status;
       if (status === 403 || status === 404) {
         setFacilities([]);
+      } else if (status === 401) {
+        setFacilities([]);
+        setError('انتهت الجلسة — سجّل الدخول مرة أخرى');
       } else {
         setError(e instanceof Error ? e.message : 'تعذر تحميل المنشآت');
         setFacilities([]);

@@ -20,6 +20,7 @@ import {
   getSelectedCurrency,
   saveSelectedCurrency,
 } from '../data/local/currencyStorage';
+import { onUnauthorized } from '../core/network/authSession';
 
 interface AppContextValue {
   container: AppContainer;
@@ -47,6 +48,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const current = await container.authRepository.getCurrentUser();
     setUser(current);
   };
+
+  useEffect(() => {
+    const unsub = onUnauthorized(() => {
+      void container.authRepository.logout().then(() => setUser(null));
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     Promise.all([refreshSession(), readWelcomeFlag(), getSelectedCurrency()])
