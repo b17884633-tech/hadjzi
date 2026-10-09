@@ -13,9 +13,11 @@ import { AppNotification } from './entities/notification.entity';
 import { AdminService } from './admin.service';
 import { AdminController } from './admin.controller';
 import { UserNotificationsController } from './user-notifications.controller';
+import { BookingModule } from '../booking/booking.module';
 
 @Module({
   imports: [
+    BookingModule,
     TypeOrmModule.forFeature([
       User,
       Provider,

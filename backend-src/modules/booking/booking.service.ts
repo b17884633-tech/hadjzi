@@ -365,49 +365,94 @@ export class BookingService {
   }
 
   async transition(bookingId: string, to: BookingStatus) {
-    return this.dataSource.transaction(async (manager) => {
-      const booking = await manager.findOne(Booking, {
-        where: { id: bookingId },
-        relations: ['availability'],
-      });
-      if (!booking) {
-        throw new NotFoundException('Booking not found');
-      }
-      if (!canTransition(booking.status, to)) {
-        throw new BadRequestException(
-          `Cannot move booking from ${booking.status} to ${to}`,
-        );
-      }
+    return this.dataSource.transaction(async (manager) =>
+      this.transitionWithManager(manager, bookingId, to),
+    );
+  }
 
-      if (
-        (to === BookingStatus.CANCELLED || to === BookingStatus.EXPIRED) &&
-        booking.serviceId
-      ) {
-        await this.releaseStayNights(manager, booking);
-        booking.temporaryLockUntil = null;
-      }
+  /**
+   * Row-locked status change. Call inside an existing transaction when composing
+   * multi-step admin/payment flows so expire/confirm cannot race.
+   */
+  async transitionWithManager(
+    manager: EntityManager,
+    bookingId: string,
+    to: BookingStatus,
+  ) {
+    const booking = await manager
+      .createQueryBuilder(Booking, 'b')
+      .setLock('pessimistic_write')
+      .leftJoinAndSelect('b.availability', 'availability')
+      .where('b.id = :id', { id: bookingId })
+      .getOne();
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+    if (booking.status === to) {
+      return booking;
+    }
+    if (!canTransition(booking.status, to)) {
+      throw new BadRequestException(
+        `Cannot move booking from ${booking.status} to ${to}`,
+      );
+    }
 
-      if (to === BookingStatus.CONFIRMED) {
-        booking.temporaryLockUntil = null;
-      }
+    if (
+      (to === BookingStatus.CANCELLED || to === BookingStatus.EXPIRED) &&
+      booking.serviceId
+    ) {
+      await this.releaseStayNights(manager, booking);
+      booking.temporaryLockUntil = null;
+    }
 
-      booking.status = to;
-      return manager.save(booking);
-    });
+    if (to === BookingStatus.CONFIRMED || to === BookingStatus.REFUNDED) {
+      booking.temporaryLockUntil = null;
+    }
+
+    booking.status = to;
+    return manager.save(booking);
   }
 
   async expirePendingLocks() {
     // Only soft-hold bookings (still mid-checkout). Payment-submitted
     // PENDING_PAYMENT rows have temporaryLockUntil = null and must stay.
-    const due = await this.bookings.find({
-      where: { status: BookingStatus.PENDING_PAYMENT },
-    });
     const now = new Date();
+    const due = await this.bookings
+      .createQueryBuilder('b')
+      .where('b.status = :status', { status: BookingStatus.PENDING_PAYMENT })
+      .andWhere('b.temporaryLockUntil IS NOT NULL')
+      .andWhere('b.temporaryLockUntil <= :now', { now })
+      .orderBy('b.temporaryLockUntil', 'ASC')
+      .take(50)
+      .getMany();
+
     const expired: string[] = [];
     for (const booking of due) {
-      if (booking.temporaryLockUntil && booking.temporaryLockUntil <= now) {
-        await this.transition(booking.id, BookingStatus.EXPIRED);
-        expired.push(booking.id);
+      try {
+        // Each transition takes FOR UPDATE; concurrent expire workers skip via canTransition.
+        await this.dataSource.transaction(async (manager) => {
+          const locked = await manager
+            .createQueryBuilder(Booking, 'b')
+            .setLock('pessimistic_partial_write')
+            .where('b.id = :id', { id: booking.id })
+            .getOne();
+          if (
+            !locked ||
+            locked.status !== BookingStatus.PENDING_PAYMENT ||
+            !locked.temporaryLockUntil ||
+            locked.temporaryLockUntil > new Date()
+          ) {
+            return;
+          }
+          await this.transitionWithManager(
+            manager,
+            locked.id,
+            BookingStatus.EXPIRED,
+          );
+          expired.push(locked.id);
+        });
+      } catch {
+        // Another worker confirmed/expired this row — safe to skip.
       }
     }
     return { expired: expired.length, ids: expired };

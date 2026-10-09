@@ -48,6 +48,7 @@ export class LoginDto {
 
 export class SendOtpDto {
   @IsString()
+  @Matches(/^\+?[0-9]{9,15}$/)
   phone: string;
 
   @IsOptional()
@@ -57,6 +58,7 @@ export class SendOtpDto {
 
 export class VerifyOtpDto {
   @IsString()
+  @Matches(/^\+?[0-9]{9,15}$/)
   phone: string;
 
   @IsString()

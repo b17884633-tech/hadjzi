@@ -25,16 +25,16 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const exceptionResponse = isHttp ? exception.getResponse() : null;
     let message: string | string[] = 'Internal server error';
 
-    if (typeof exceptionResponse === 'string') {
-      message = exceptionResponse;
-    } else if (
-      exceptionResponse &&
-      typeof exceptionResponse === 'object' &&
-      'message' in exceptionResponse
-    ) {
-      message = (exceptionResponse as { message: string | string[] }).message;
-    } else if (exception instanceof Error) {
-      message = exception.message;
+    if (status < 500) {
+      if (typeof exceptionResponse === 'string') {
+        message = exceptionResponse;
+      } else if (
+        exceptionResponse &&
+        typeof exceptionResponse === 'object' &&
+        'message' in exceptionResponse
+      ) {
+        message = (exceptionResponse as { message: string | string[] }).message;
+      }
     }
 
     if (status >= 500) {
@@ -45,6 +45,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
             ? JSON.stringify(exception)
             : String(exception);
       this.logger.error(`${request.method} ${request.url}`, detail);
+      message = 'Internal server error';
     }
 
     response.status(status).json({

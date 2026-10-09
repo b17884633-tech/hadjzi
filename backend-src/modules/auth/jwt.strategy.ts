@@ -1,9 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { UsersService } from '../users/users.service';
-import { UserRole } from '../../common/enums';
+import { AccountStatus, UserRole } from '../../common/enums';
 
 export interface JwtPayload {
   sub: string;
@@ -20,11 +20,15 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: config.get<string>('jwt.secret', 'dev-secret'),
+      secretOrKey: config.getOrThrow<string>('jwt.secret'),
     });
   }
 
-  validate(payload: JwtPayload) {
-    return this.usersService.findByIdOrFail(payload.sub);
+  async validate(payload: JwtPayload) {
+    const user = await this.usersService.findByIdOrFail(payload.sub);
+    if (user.status === AccountStatus.SUSPENDED) {
+      throw new UnauthorizedException('Account suspended');
+    }
+    return user;
   }
 }

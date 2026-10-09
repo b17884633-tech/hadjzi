@@ -18,8 +18,10 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { AppText as Text } from '@/core/ui/components/AppText';
 import { BackButton } from '../../core/ui/components/BackButton';
 import { ImageGalleryModal } from '@/core/ui/components/ImageGalleryModal';
+import { MapFallback } from '@/core/ui/components/MapFallback';
 import { ProviderProfileSkeleton } from '@/core/ui/components/Skeleton';
 import { Ionicons } from '@expo/vector-icons';
+import { isNativeMapsEnabled } from '../../core/maps/mapsEnabled';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -547,22 +549,30 @@ export function ProviderProfileScreen() {
                 <Text style={styles.locText}>{addressLine || 'صنعاء'}</Text>
               </View>
               <Pressable style={styles.mapCard} onPress={openMaps}>
-                <MapView
-                  style={[styles.map, RTL_MAP_FIX]}
-                  pointerEvents="none"
-                  scrollEnabled={false}
-                  zoomEnabled={false}
-                  rotateEnabled={false}
-                  pitchEnabled={false}
-                  toolbarEnabled={false}
-                  initialRegion={{
-                    ...mapCoords,
-                    latitudeDelta: 0.012,
-                    longitudeDelta: 0.012,
-                  }}
-                >
-                  <Marker coordinate={mapCoords} pinColor="#E11D48" />
-                </MapView>
+                {isNativeMapsEnabled() ? (
+                  <MapView
+                    style={[styles.map, { transform: [...RTL_MAP_FIX] }]}
+                    pointerEvents="none"
+                    scrollEnabled={false}
+                    zoomEnabled={false}
+                    rotateEnabled={false}
+                    pitchEnabled={false}
+                    toolbarEnabled={false}
+                    initialRegion={{
+                      ...mapCoords,
+                      latitudeDelta: 0.012,
+                      longitudeDelta: 0.012,
+                    }}
+                  >
+                    <Marker coordinate={mapCoords} pinColor="#E11D48" />
+                  </MapView>
+                ) : (
+                  <MapFallback
+                    latitude={mapCoords.latitude}
+                    longitude={mapCoords.longitude}
+                    height={160}
+                  />
+                )}
               </Pressable>
             </>
           ) : null}

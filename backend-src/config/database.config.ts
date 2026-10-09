@@ -6,7 +6,10 @@ export default registerAs(
   (): TypeOrmModuleOptions => ({
     type: 'postgres',
     url: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
+    ssl: {
+      // Supabase pooler often needs false locally; set DB_SSL_REJECT_UNAUTHORIZED=true in prod when CA is trusted.
+      rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED === 'true',
+    },
     autoLoadEntities: true,
     synchronize: false,
     logging: process.env.TYPEORM_LOGGING === 'true',

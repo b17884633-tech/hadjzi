@@ -9,6 +9,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, MoreThan, Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
+import { randomInt } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { OtpCode } from './entities/otp-code.entity';
 import { OtpChannel, OtpPurpose } from '../../common/enums';
@@ -53,7 +54,17 @@ export class OtpService implements OnModuleInit {
       );
     }
 
-    const code = String(Math.floor(100000 + Math.random() * 900000));
+    // Invalidate any older unused codes for this phone+purpose.
+    await this.otpRepo
+      .createQueryBuilder()
+      .update(OtpCode)
+      .set({ consumedAt: new Date() })
+      .where('phone = :phone', { phone })
+      .andWhere('purpose = :purpose', { purpose })
+      .andWhere('consumed_at IS NULL')
+      .execute();
+
+    const code = String(randomInt(100000, 1000000));
     // Cost 8: OTP is short-lived; lower than password hashing under load.
     const codeHash = await bcrypt.hash(code, 8);
     const minutes = Number(this.config.get('OTP_EXPIRES_MINUTES') ?? 5);

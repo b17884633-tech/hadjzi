@@ -37,6 +37,7 @@ import {
   AdminUpdateSettingsDto,
   AdminUpdateUserDto,
 } from './dto/admin.dto';
+import { BookingService } from '../booking/booking.service';
 
 const DEPOSIT_KEY = 'default_deposit_percentage';
 
@@ -48,6 +49,7 @@ export class AdminService {
     @InjectRepository(Payment) private readonly payments: Repository<Payment>,
     @InjectRepository(Dispute) private readonly disputes: Repository<Dispute>,
     @InjectRepository(Booking) private readonly bookings: Repository<Booking>,
+    private readonly bookingService: BookingService,
     @InjectRepository(ServiceItem) private readonly services: Repository<ServiceItem>,
     @InjectRepository(Category) private readonly categories: Repository<Category>,
     @InjectRepository(City) private readonly cities: Repository<City>,
@@ -453,9 +455,10 @@ export class AdminService {
       payment.bookingId &&
       payment.paymentType !== PaymentType.REFUND
     ) {
-      await this.bookings.update(payment.bookingId, {
-        status: BookingStatus.CONFIRMED,
-      });
+      await this.bookingService.transition(
+        payment.bookingId,
+        BookingStatus.CONFIRMED,
+      );
     }
 
     return this.mapPayment(payment);
@@ -495,9 +498,10 @@ export class AdminService {
     });
     const saved = await this.payments.save(refund);
     if (source.bookingId) {
-      await this.bookings.update(source.bookingId, {
-        status: BookingStatus.REFUNDED,
-      });
+      await this.bookingService.transition(
+        source.bookingId,
+        BookingStatus.REFUNDED,
+      );
     }
     const full = await this.payments.findOne({
       where: { id: saved.id },

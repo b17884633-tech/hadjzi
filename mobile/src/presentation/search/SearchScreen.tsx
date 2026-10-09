@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   I18nManager,
   Image,
   Linking,
@@ -16,6 +17,7 @@ import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '../../core/ui/theme';
+import { isNativeMapsEnabled } from '../../core/maps/mapsEnabled';
 import { useApp } from '../../di/AppProvider';
 import { Provider } from '../../domain/model/Provider';
 import { Destination } from '../../domain/model/Search';
@@ -43,13 +45,14 @@ export function SearchScreen() {
   const { container, formatPrice } = useApp();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const mapRef = useRef<MapView>(null);
+  const mapsEnabled = isNativeMapsEnabled();
 
   const [cities, setCities] = useState<Destination[]>(FALLBACK_CITIES);
   const [city, setCity] = useState<Destination>(FALLBACK_CITIES[0]);
   const [cityOpen, setCityOpen] = useState(false);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
-  const [mapReady, setMapReady] = useState(false);
+  const [mapReady, setMapReady] = useState(!mapsEnabled);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const cityCenter = useMemo(() => centerForCityName(city.name), [city.name]);
@@ -125,6 +128,98 @@ export function SearchScreen() {
   const openProvider = (id: string) =>
     navigation.navigate('ProviderProfile', { providerId: id });
 
+  const renderProviderRow = (item: Provider) => {
+    const service = cheapestService(item);
+    const price = service?.priceFrom ?? service?.basePrice;
+    return (
+      <Pressable style={styles.resultCard} onPress={() => openProvider(item.id)}>
+        <View style={styles.cardBody}>
+          <Text style={styles.cardTitle} numberOfLines={1}>
+            {item.businessName}
+          </Text>
+          <Text style={styles.cardMeta} numberOfLines={1}>
+            {[item.cityName ?? item.city?.name, item.addressDetails]
+              .filter(Boolean)
+              .join(' · ')}
+          </Text>
+          <View style={styles.cardFooter}>
+            {item.categoryName || item.category?.name ? (
+              <Text style={styles.cardCat}>
+                {item.categoryName ?? item.category?.name}
+              </Text>
+            ) : (
+              <View />
+            )}
+            {price != null ? (
+              <Text style={styles.cardPrice}>من {formatPrice(price)}</Text>
+            ) : null}
+          </View>
+        </View>
+        {item.images?.[0] || item.logoUrl ? (
+          <Image
+            source={{ uri: item.images?.[0] ?? item.logoUrl }}
+            style={styles.cardImage}
+          />
+        ) : (
+          <View style={[styles.cardImage, styles.cardImageFallback]}>
+            <Ionicons name="business" size={22} color={theme.colors.primary} />
+          </View>
+        )}
+      </Pressable>
+    );
+  };
+
+  if (!mapsEnabled) {
+    return (
+      <View style={styles.root}>
+        <SafeAreaView style={styles.listSafe} edges={['top', 'left', 'right']}>
+          <View style={styles.header}>
+            <Pressable style={styles.cityChip} onPress={() => setCityOpen(true)}>
+              <Ionicons name="location" size={16} color={theme.colors.primary} />
+              <Text style={styles.cityChipText} numberOfLines={1}>
+                المدينة: {city.name}
+              </Text>
+              <Ionicons name="chevron-down" size={14} color={theme.colors.textSecondary} />
+            </Pressable>
+            <Pressable
+              style={styles.whatsappBtn}
+              onPress={() => Linking.openURL(WHATSAPP_URL)}
+              accessibilityRole="button"
+              accessibilityLabel="واتساب"
+            >
+              <Ionicons name="logo-whatsapp" size={20} color="#25D366" />
+            </Pressable>
+          </View>
+          {loading ? (
+            <View style={styles.listLoading}>
+              <ActivityIndicator color={theme.colors.primary} />
+            </View>
+          ) : (
+            <FlatList
+              data={providers}
+              keyExtractor={(p) => p.id}
+              contentContainerStyle={styles.listContent}
+              ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+              ListEmptyComponent={
+                <Text style={styles.emptyList}>لا توجد منشآت في هذه المدينة</Text>
+              }
+              renderItem={({ item }) => renderProviderRow(item)}
+            />
+          )}
+        </SafeAreaView>
+        <CityPickerSheet
+          visible={cityOpen}
+          cities={cities}
+          selectedCityId={city.id}
+          title="اختر المدينة"
+          subtitle="عرض المنشآت حسب المدينة"
+          onClose={() => setCityOpen(false)}
+          onSelect={onSelectCity}
+        />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.root}>
       {/* LTR host + scaleX fix so the map isn't a black void under forceRTL */}
@@ -163,7 +258,6 @@ export function SearchScreen() {
 
       <SafeAreaView style={styles.overlay} edges={['top', 'left', 'right']} pointerEvents="box-none">
         <View style={styles.header} pointerEvents="box-none">
-          {/* RTL: first = right (city), last = left (WhatsApp) */}
           <Pressable style={styles.cityChip} onPress={() => setCityOpen(true)}>
             <Ionicons name="location" size={16} color={theme.colors.primary} />
             <Text style={styles.cityChipText} numberOfLines={1}>
@@ -193,44 +287,7 @@ export function SearchScreen() {
 
       {selected ? (
         <SafeAreaView style={styles.cardSafe} edges={['bottom']} pointerEvents="box-none">
-          <Pressable style={styles.resultCard} onPress={() => openProvider(selected.id)}>
-            <View style={styles.cardBody}>
-              <Text style={styles.cardTitle} numberOfLines={1}>
-                {selected.businessName}
-              </Text>
-              <Text style={styles.cardMeta} numberOfLines={1}>
-                {[selected.cityName ?? selected.city?.name, selected.addressDetails]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </Text>
-              <View style={styles.cardFooter}>
-                {selected.categoryName || selected.category?.name ? (
-                  <Text style={styles.cardCat}>
-                    {selected.categoryName ?? selected.category?.name}
-                  </Text>
-                ) : (
-                  <View />
-                )}
-                {(() => {
-                  const service = cheapestService(selected);
-                  const price = service?.priceFrom ?? service?.basePrice;
-                  return price != null ? (
-                    <Text style={styles.cardPrice}>من {formatPrice(price)}</Text>
-                  ) : null;
-                })()}
-              </View>
-            </View>
-            {selected.images?.[0] || selected.logoUrl ? (
-              <Image
-                source={{ uri: selected.images?.[0] ?? selected.logoUrl }}
-                style={styles.cardImage}
-              />
-            ) : (
-              <View style={[styles.cardImage, styles.cardImageFallback]}>
-                <Ionicons name="business" size={22} color={theme.colors.primary} />
-              </View>
-            )}
-          </Pressable>
+          {renderProviderRow(selected)}
         </SafeAreaView>
       ) : null}
 
@@ -251,6 +308,24 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: '#F0F4F8',
+  },
+  listSafe: {
+    flex: 1,
+  },
+  listContent: {
+    paddingHorizontal: 14,
+    paddingBottom: 120,
+  },
+  listLoading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyList: {
+    textAlign: 'center',
+    marginTop: 40,
+    fontSize: 14,
+    color: theme.colors.textSecondary,
   },
   mapHost: {
     ...StyleSheet.absoluteFillObject,
