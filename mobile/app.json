@@ -16,7 +16,10 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.platform.booking"
+      "bundleIdentifier": "com.platform.booking",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "com.platform.booking",
@@ -32,7 +35,14 @@
       "barStyle": "dark-content"
     },
     "extra": {
-      "apiBaseUrl": "https://hadjzi.onrender.com/api"
+      "apiBaseUrl": "https://hadjzi.onrender.com/api",
+      "expo-navigation-bar": {
+        "enforceContrast": false,
+        "style": "dark"
+      },
+      "eas": {
+        "projectId": "b9324417-eb2b-4d69-9a65-7fdc7dc0f5bb"
+      }
     },
     "plugins": [
       "expo-asset",

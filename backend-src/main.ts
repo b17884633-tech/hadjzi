@@ -23,9 +23,10 @@ function assertProductionSecrets(): void {
       'JWT_SECRET must be a strong random value (32+ chars) in production',
     );
   }
-  // Never echo OTP codes in production responses (even if env was left as true).
   if (process.env.OTP_DEV_ECHO === 'true') {
-    logger.warn('OTP_DEV_ECHO=true ignored in production — codes will not be returned in API');
+    logger.warn(
+      'OTP_DEV_ECHO=true ignored in production — codes will not be returned in API',
+    );
     process.env.OTP_DEV_ECHO = 'false';
   }
   if (
@@ -38,6 +39,23 @@ function assertProductionSecrets(): void {
   }
 }
 
+function resolveCorsOrigins(): string[] {
+  const fromEnv = (process.env.CORS_ORIGINS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  // Always allow the deployed admin + local Vite, plus any extras from env.
+  return [
+    ...new Set([
+      'https://hadjzi-admin.onrender.com',
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
+      ...fromEnv,
+    ]),
+  ];
+}
+
 async function bootstrap() {
   configureTimezone();
   assertProductionSecrets();
@@ -46,22 +64,45 @@ async function bootstrap() {
   const expressApp = app.getHttpAdapter().getInstance();
   expressApp.set('trust proxy', 1);
 
-  app.use(helmet());
+  const allowedOrigins = resolveCorsOrigins();
+  new Logger('Bootstrap').log(`CORS origins: ${allowedOrigins.join(', ')}`);
+
+  // CORS before helmet / body parsers so preflight always gets ACAO headers.
+  app.enableCors({
+    origin: (
+      origin: string | undefined,
+      callback: (err: Error | null, allow?: boolean) => void,
+    ) => {
+      // Mobile apps and server-to-server often send no Origin.
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(null, false);
+    },
+    credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'x-webhook-secret',
+      'Accept',
+      'Origin',
+      'X-Requested-With',
+    ],
+    exposedHeaders: ['Content-Length'],
+    maxAge: 86_400,
+  });
+
+  app.use(
+    helmet({
+      // Allow browser clients on another origin (admin dashboard) to call this API.
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
   app.use(compression());
   app.use(json({ limit: '1mb' }));
   app.use(urlencoded({ extended: true, limit: '1mb' }));
-
-  const origins = (process.env.CORS_ORIGINS ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  app.enableCors({
-    origin: origins.length > 0 ? origins : true,
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-webhook-secret'],
-  });
 
   app.setGlobalPrefix('api');
   app.useGlobalPipes(

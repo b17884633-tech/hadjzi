@@ -46,7 +46,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   try {
     response = await fetch(`${API_BASE}${path}`, { ...init, headers });
   } catch {
-    throw new ApiError(0, 'Cannot reach the API. Is the backend running on port 3000?');
+    throw new ApiError(0, 'Cannot reach the API. Backend may be waking up or CORS is blocking this origin.');
   }
 
   const payload = (await response.json().catch(() => null)) as Envelope<T> | null;

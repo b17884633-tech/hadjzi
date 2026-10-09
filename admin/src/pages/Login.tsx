@@ -49,7 +49,7 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
             payments in one place — live from the same database as the mobile app.
           </p>
         </div>
-        <p>Uses the Nest API on port 3000.</p>
+        <p>Uses https://hadjzi.onrender.com/api</p>
       </section>
       <section className="login-panel">
         <form className="login-card" onSubmit={submit}>

@@ -24,7 +24,7 @@ services:
       - key: PAYMENT_WEBHOOK_SECRET
         generateValue: true
       - key: CORS_ORIGINS
-        sync: false
+        value: https://hadjzi-admin.onrender.com
       - key: CLOUDINARY_CLOUD_NAME
         sync: false
       - key: CLOUDINARY_API_KEY
