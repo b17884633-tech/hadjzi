@@ -7,5 +7,12 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    // Render / tunnels: allow any host (Vite 5+ blocks unknown Host headers)
+    allowedHosts: true,
+  },
+  preview: {
+    host: true,
+    port: Number(process.env.PORT) || 4173,
+    allowedHosts: true,
   },
 });
