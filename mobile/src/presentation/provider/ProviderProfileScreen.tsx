@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dimensions,
   FlatList,
-  I18nManager,
   Image,
   Linking,
   NativeScrollEvent,
@@ -13,7 +12,6 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
 import { LinearGradient } from 'expo-linear-gradient';
 import { AppText as Text } from '@/core/ui/components/AppText';
 import { BackButton } from '../../core/ui/components/BackButton';
@@ -21,7 +19,6 @@ import { ImageGalleryModal } from '@/core/ui/components/ImageGalleryModal';
 import { MapFallback } from '@/core/ui/components/MapFallback';
 import { ProviderProfileSkeleton } from '@/core/ui/components/Skeleton';
 import { Ionicons } from '@expo/vector-icons';
-import { isNativeMapsEnabled } from '../../core/maps/mapsEnabled';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -59,7 +56,6 @@ type Route = RouteProp<RootStackParamList, 'ProviderProfile'>;
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const HERO_H = SCREEN_W * 0.88;
-const RTL_MAP_FIX = I18nManager.isRTL ? ([{ scaleX: -1 }] as const) : [];
 
 function collectImages(provider: Provider): string[] {
   const fromProvider = provider.images?.filter(Boolean) ?? [];
@@ -549,30 +545,11 @@ export function ProviderProfileScreen() {
                 <Text style={styles.locText}>{addressLine || 'صنعاء'}</Text>
               </View>
               <Pressable style={styles.mapCard} onPress={openMaps}>
-                {isNativeMapsEnabled() ? (
-                  <MapView
-                    style={[styles.map, { transform: [...RTL_MAP_FIX] }]}
-                    pointerEvents="none"
-                    scrollEnabled={false}
-                    zoomEnabled={false}
-                    rotateEnabled={false}
-                    pitchEnabled={false}
-                    toolbarEnabled={false}
-                    initialRegion={{
-                      ...mapCoords,
-                      latitudeDelta: 0.012,
-                      longitudeDelta: 0.012,
-                    }}
-                  >
-                    <Marker coordinate={mapCoords} pinColor="#E11D48" />
-                  </MapView>
-                ) : (
-                  <MapFallback
-                    latitude={mapCoords.latitude}
-                    longitude={mapCoords.longitude}
-                    height={160}
-                  />
-                )}
+                <MapFallback
+                  latitude={mapCoords.latitude}
+                  longitude={mapCoords.longitude}
+                  height={160}
+                />
               </Pressable>
             </>
           ) : null}

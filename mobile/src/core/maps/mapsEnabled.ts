@@ -2,17 +2,29 @@ import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 /**
- * Native MapView crashes on Android release builds when
- * com.google.android.geo.API_KEY is missing. Only mount maps when a key
- * was baked into the binary (via app.config / EAS env).
+ * Native Android MapView fatally crashes without a Google Maps API key
+ * in the app manifest. Stay off until a non-empty key is baked in via
+ * GOOGLE_MAPS_API_KEY_ANDROID / app.config.js.
+ *
+ * Do NOT enable for Expo Go / __DEV__ heuristics — custom EAS builds
+ * still crash, and that is what users install from preview links.
  */
 export function isNativeMapsEnabled(): boolean {
+  if (Platform.OS !== 'android' && Platform.OS !== 'ios') {
+    return false;
+  }
+
   const extra = Constants.expoConfig?.extra as
     | { mapsEnabled?: boolean; googleMapsApiKey?: string | null }
     | undefined;
 
-  if (extra?.mapsEnabled === true) return true;
-  if (extra?.googleMapsApiKey) return true;
+  const fromExtra =
+    (typeof extra?.googleMapsApiKey === 'string' &&
+      extra.googleMapsApiKey.trim().length > 0 &&
+      extra.mapsEnabled !== false) ||
+    extra?.mapsEnabled === true;
+
+  if (fromExtra) return true;
 
   const androidKey = (
     Constants.expoConfig?.android as
@@ -20,12 +32,5 @@ export function isNativeMapsEnabled(): boolean {
       | undefined
   )?.config?.googleMaps?.apiKey;
 
-  if (androidKey) return true;
-
-  // Expo Go ships with a Maps key. iOS uses Apple Maps by default.
-  if (Constants.appOwnership === 'expo') return true;
-  if (Platform.OS === 'ios') return true;
-
-  // Android release / preview builds crash without a key in the manifest.
-  return false;
+  return typeof androidKey === 'string' && androidKey.trim().length > 0;
 }

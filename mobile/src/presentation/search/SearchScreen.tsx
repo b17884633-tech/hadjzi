@@ -1,23 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  I18nManager,
   Image,
   Linking,
-  Platform,
   Pressable,
   StyleSheet,
   View,
 } from 'react-native';
-import MapView, { Marker, Region } from 'react-native-maps';
 import { AppText as Text } from '@/core/ui/components/AppText';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '../../core/ui/theme';
-import { isNativeMapsEnabled } from '../../core/maps/mapsEnabled';
 import { useApp } from '../../di/AppProvider';
 import { Provider } from '../../domain/model/Provider';
 import { Destination } from '../../domain/model/Search';
@@ -25,8 +21,6 @@ import { cheapestService } from '../../data/mappers/homeMappers';
 import { getSelectedCity, saveSelectedCity } from '../../data/local/cityStorage';
 import { CityPickerSheet } from '../home/components/CityPickerSheet';
 import { RootStackParamList } from '../navigation/types';
-import { MapProviderMarker } from './MapProviderMarker';
-import { centerForCityName, coordsForProvider, DEFAULT_CENTER } from './mapGeo';
 
 const WHATSAPP_URL = 'https://wa.me/967700000000';
 const FALLBACK_CITIES: Destination[] = [
@@ -38,38 +32,22 @@ const FALLBACK_CITIES: Destination[] = [
   { id: 6, name: 'المكلا' },
 ];
 
-/** MapView draws black under forceRTL on Android — double-flip restores tiles. */
-const RTL_MAP_FIX = I18nManager.isRTL ? ([{ scaleX: -1 }] as const) : [];
-
+/**
+ * List-based explore tab.
+ * Native MapView is intentionally not imported — Android builds without a
+ * Google Maps API key crash as soon as react-native-maps mounts.
+ * Re-add a map panel later behind isNativeMapsEnabled() + a Maps key.
+ */
 export function SearchScreen() {
   const { container, formatPrice } = useApp();
-  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const mapRef = useRef<MapView>(null);
-  const mapsEnabled = isNativeMapsEnabled();
+  const navigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   const [cities, setCities] = useState<Destination[]>(FALLBACK_CITIES);
   const [city, setCity] = useState<Destination>(FALLBACK_CITIES[0]);
   const [cityOpen, setCityOpen] = useState(false);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
-  const [mapReady, setMapReady] = useState(!mapsEnabled);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-
-  const cityCenter = useMemo(() => centerForCityName(city.name), [city.name]);
-
-  const markers = useMemo(
-    () =>
-      providers.map((p) => ({
-        provider: p,
-        coordinate: coordsForProvider(p, cityCenter),
-      })),
-    [providers, cityCenter],
-  );
-
-  const selected = useMemo(
-    () => providers.find((p) => p.id === selectedId) ?? null,
-    [providers, selectedId],
-  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -108,17 +86,6 @@ export function SearchScreen() {
     load().catch(() => undefined);
   }, [load]);
 
-  useEffect(() => {
-    if (!mapReady) return;
-    const region: Region = {
-      ...cityCenter,
-      latitudeDelta: 0.08,
-      longitudeDelta: 0.08,
-    };
-    mapRef.current?.animateToRegion(region, 450);
-    setSelectedId(null);
-  }, [cityCenter, mapReady]);
-
   const onSelectCity = async (next: Destination) => {
     setCity(next);
     setCityOpen(false);
@@ -128,7 +95,7 @@ export function SearchScreen() {
   const openProvider = (id: string) =>
     navigation.navigate('ProviderProfile', { providerId: id });
 
-  const renderProviderRow = (item: Provider) => {
+  const renderProviderRow = ({ item }: { item: Provider }) => {
     const service = cheapestService(item);
     const price = service?.priceFrom ?? service?.basePrice;
     return (
@@ -169,101 +136,20 @@ export function SearchScreen() {
     );
   };
 
-  if (!mapsEnabled) {
-    return (
-      <View style={styles.root}>
-        <SafeAreaView style={styles.listSafe} edges={['top', 'left', 'right']}>
-          <View style={styles.header}>
-            <Pressable style={styles.cityChip} onPress={() => setCityOpen(true)}>
-              <Ionicons name="location" size={16} color={theme.colors.primary} />
-              <Text style={styles.cityChipText} numberOfLines={1}>
-                المدينة: {city.name}
-              </Text>
-              <Ionicons name="chevron-down" size={14} color={theme.colors.textSecondary} />
-            </Pressable>
-            <Pressable
-              style={styles.whatsappBtn}
-              onPress={() => Linking.openURL(WHATSAPP_URL)}
-              accessibilityRole="button"
-              accessibilityLabel="واتساب"
-            >
-              <Ionicons name="logo-whatsapp" size={20} color="#25D366" />
-            </Pressable>
-          </View>
-          {loading ? (
-            <View style={styles.listLoading}>
-              <ActivityIndicator color={theme.colors.primary} />
-            </View>
-          ) : (
-            <FlatList
-              data={providers}
-              keyExtractor={(p) => p.id}
-              contentContainerStyle={styles.listContent}
-              ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
-              ListEmptyComponent={
-                <Text style={styles.emptyList}>لا توجد منشآت في هذه المدينة</Text>
-              }
-              renderItem={({ item }) => renderProviderRow(item)}
-            />
-          )}
-        </SafeAreaView>
-        <CityPickerSheet
-          visible={cityOpen}
-          cities={cities}
-          selectedCityId={city.id}
-          title="اختر المدينة"
-          subtitle="عرض المنشآت حسب المدينة"
-          onClose={() => setCityOpen(false)}
-          onSelect={onSelectCity}
-        />
-      </View>
-    );
-  }
-
   return (
     <View style={styles.root}>
-      {/* LTR host + scaleX fix so the map isn't a black void under forceRTL */}
-      <View style={[styles.mapHost, { transform: [...RTL_MAP_FIX] }]}>
-        <MapView
-          ref={mapRef}
-          style={[styles.map, { transform: [...RTL_MAP_FIX] }]}
-          initialRegion={{
-            ...DEFAULT_CENTER,
-            latitudeDelta: 0.08,
-            longitudeDelta: 0.08,
-          }}
-          userInterfaceStyle="light"
-          loadingEnabled
-          loadingIndicatorColor={theme.colors.primary}
-          loadingBackgroundColor="#F0F4F8"
-          showsUserLocation={false}
-          showsMyLocationButton={false}
-          showsCompass={false}
-          toolbarEnabled={false}
-          onMapReady={() => setMapReady(true)}
-          onPress={() => setSelectedId(null)}
-        >
-          {markers.map(({ provider, coordinate }) => (
-            <Marker
-              key={provider.id}
-              coordinate={coordinate}
-              tracksViewChanges={Platform.OS === 'android' && !mapReady}
-              onPress={() => setSelectedId(provider.id)}
-            >
-              <MapProviderMarker selected={provider.id === selectedId} />
-            </Marker>
-          ))}
-        </MapView>
-      </View>
-
-      <SafeAreaView style={styles.overlay} edges={['top', 'left', 'right']} pointerEvents="box-none">
-        <View style={styles.header} pointerEvents="box-none">
+      <SafeAreaView style={styles.listSafe} edges={['top', 'left', 'right']}>
+        <View style={styles.header}>
           <Pressable style={styles.cityChip} onPress={() => setCityOpen(true)}>
             <Ionicons name="location" size={16} color={theme.colors.primary} />
             <Text style={styles.cityChipText} numberOfLines={1}>
               المدينة: {city.name}
             </Text>
-            <Ionicons name="chevron-down" size={14} color={theme.colors.textSecondary} />
+            <Ionicons
+              name="chevron-down"
+              size={14}
+              color={theme.colors.textSecondary}
+            />
           </Pressable>
           <Pressable
             style={styles.whatsappBtn}
@@ -275,28 +161,30 @@ export function SearchScreen() {
           </Pressable>
         </View>
 
-        {loading || !mapReady ? (
-          <View style={styles.loadingPill}>
-            <ActivityIndicator size="small" color={theme.colors.primary} />
-            <Text style={styles.loadingText}>
-              {!mapReady ? 'جاري تحميل الخريطة…' : 'جاري التحميل…'}
-            </Text>
+        {loading ? (
+          <View style={styles.listLoading}>
+            <ActivityIndicator color={theme.colors.primary} />
           </View>
-        ) : null}
+        ) : (
+          <FlatList
+            data={providers}
+            keyExtractor={(p) => p.id}
+            contentContainerStyle={styles.listContent}
+            ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+            ListEmptyComponent={
+              <Text style={styles.emptyList}>لا توجد منشآت في هذه المدينة</Text>
+            }
+            renderItem={renderProviderRow}
+          />
+        )}
       </SafeAreaView>
-
-      {selected ? (
-        <SafeAreaView style={styles.cardSafe} edges={['bottom']} pointerEvents="box-none">
-          {renderProviderRow(selected)}
-        </SafeAreaView>
-      ) : null}
 
       <CityPickerSheet
         visible={cityOpen}
         cities={cities}
         selectedCityId={city.id}
         title="اختر المدينة"
-        subtitle="عرض المنشآت على الخريطة حسب المدينة"
+        subtitle="عرض المنشآت حسب المدينة"
         onClose={() => setCityOpen(false)}
         onSelect={onSelectCity}
       />
@@ -326,15 +214,6 @@ const styles = StyleSheet.create({
     marginTop: 40,
     fontSize: 14,
     color: theme.colors.textSecondary,
-  },
-  mapHost: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  map: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
   },
   header: {
     flexDirection: 'row',
@@ -382,29 +261,6 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
     elevation: 3,
-  },
-  loadingPill: {
-    alignSelf: 'center',
-    marginTop: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(255,255,255,0.95)',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-  },
-  loadingText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: theme.colors.textSecondary,
-  },
-  cardSafe: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 96,
-    paddingHorizontal: 14,
   },
   resultCard: {
     flexDirection: 'row',
