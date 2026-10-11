@@ -9,6 +9,7 @@ export function TopRatedCard({
   title,
   subtitle,
   rating,
+  reviewCount,
   price,
   depositPercentage,
   categoryLabel,
@@ -19,6 +20,7 @@ export function TopRatedCard({
   title: string;
   subtitle?: string;
   rating?: number;
+  reviewCount?: number;
   price?: number;
   depositPercentage?: number;
   categoryLabel?: string;
@@ -27,6 +29,8 @@ export function TopRatedCard({
   onPress?: () => void;
 }) {
   const { formatPrice } = useApp();
+  const hasRating =
+    rating != null && (reviewCount == null || reviewCount > 0);
   return (
     <Pressable
       style={({ pressed }) => [styles.card, pressed && styles.pressed]}
@@ -53,12 +57,12 @@ export function TopRatedCard({
               {title}
             </Text>
           </View>
-          {rating != null ? (
-            <View style={styles.ratingRow}>
-              <Text style={styles.rating}>{formatNumber(rating, 1)}</Text>
-              <Ionicons name="star" size={12} color={theme.colors.accent} />
-            </View>
-          ) : null}
+          <View style={styles.ratingRow}>
+            <Text style={styles.rating}>
+              {hasRating ? formatNumber(rating, 1) : 'جديد'}
+            </Text>
+            <Ionicons name="star" size={12} color={theme.colors.accent} />
+          </View>
         </View>
 
         {subtitle ? (

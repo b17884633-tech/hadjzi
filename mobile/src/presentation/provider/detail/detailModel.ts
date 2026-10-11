@@ -5,6 +5,21 @@ import {
 } from '../../../core/common/pricePeriods';
 import { Provider, ServiceItem } from '../../../domain/model/Provider';
 import { colors } from '../../../core/ui/theme/colors';
+import {
+  isArtistCategory,
+  isCarCategory,
+  isChaletCategory,
+  isHallCategory,
+  isHealthCategory,
+  isHotelCategory,
+  isPhotoCategory,
+  isPoolCategory,
+  isSalonCategory,
+  isSportCategory,
+  isSupplyCategory,
+  isTairamanCategory,
+  SERVICE_FACILITY_DEFAULTS,
+} from '../categoryKinds';
 
 /** Detail palette — Hadjzi logo navy + gold. */
 export const DETAIL = {
@@ -117,18 +132,16 @@ function strList(attrs: Record<string, unknown>, key: string): string[] {
 }
 
 function isHotel(cat: string): boolean {
-  // Singular فندق and plural فنادق / الفنادق (ا after ن)
-  return /فنادق|فندق|hotel/i.test(cat);
+  return isHotelCategory(cat);
 }
 function isHall(cat: string): boolean {
-  return /صالة|قاعة|صالات|قاعات|hall|wedding|زفاف/i.test(cat);
+  return isHallCategory(cat);
 }
 function isTairaman(cat: string): boolean {
-  return /طيرمان|طرمان|tairaman/i.test(cat);
+  return isTairamanCategory(cat);
 }
-/** Chalets and tairamanat share the same facility + detail layout. */
 function isChalet(cat: string): boolean {
-  return /شالي|chalet/i.test(cat) || isTairaman(cat);
+  return isChaletCategory(cat);
 }
 function isStay(cat: string): boolean {
   return (
@@ -139,16 +152,28 @@ function isStay(cat: string): boolean {
   );
 }
 function isHealth(cat: string): boolean {
-  return /صح|عياد|مستشفى|طبي|أشعة|علاج|أسنان|جلد/i.test(cat);
+  return isHealthCategory(cat);
 }
 function isSport(cat: string): boolean {
-  return /ملاعب|ملعب|مسبح|نادي|كرة|بادل|رياض/i.test(cat);
+  return isSportCategory(cat);
+}
+function isPool(cat: string): boolean {
+  return isPoolCategory(cat);
 }
 function isSalon(cat: string): boolean {
-  return /كوافير|حلاق|تجميل/i.test(cat);
+  return isSalonCategory(cat);
+}
+function isCar(cat: string): boolean {
+  return isCarCategory(cat);
+}
+function isArtist(cat: string): boolean {
+  return isArtistCategory(cat);
+}
+function isPhoto(cat: string): boolean {
+  return isPhotoCategory(cat);
 }
 function isEventSupply(cat: string): boolean {
-  return /مستلزم|ماء|زينة|كوش|حلو|كيك|هدايا|فل|ثلاج|خيم|طباخ/i.test(cat);
+  return isSupplyCategory(cat);
 }
 
 function iconForSpaceLabel(label: string): keyof typeof Ionicons.glyphMap {
@@ -191,8 +216,14 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
   const stay = isStay(cat);
   const health = isHealth(cat);
   const sport = isSport(cat);
+  const pool = isPool(cat);
   const salon = isSalon(cat);
+  const car = isCar(cat);
+  const artist = isArtist(cat);
+  const photo = isPhoto(cat);
   const supply = isEventSupply(cat);
+  const serviceFacility =
+    health || salon || pool || car || artist || photo || supply;
 
   const bathrooms =
     num(serviceAttrs, 'bathrooms') ??
@@ -261,7 +292,7 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
   if (chalet && majlis != null) {
     featureChips.push({ key: 'majlis', icon: 'home-outline', label: `${majlis} مجالس` });
   }
-  if (health && slotMinutes != null) {
+  if ((health || salon || photo) && slotMinutes != null) {
     featureChips.push({ key: 'slot', icon: 'time-outline', label: `${slotMinutes} دقيقة` });
   }
   if (sport && maxPlayers != null) {
@@ -272,6 +303,13 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
       label: `${maxPlayers} لاعب كحد أقصى (${side} × ${side})`,
     });
   }
+  if (pool && maxPlayers != null) {
+    featureChips.push({
+      key: 'swimmers',
+      icon: 'people-outline',
+      label: `${maxPlayers} مرتاد كحد أقصى`,
+    });
+  }
   if (sport && fieldLength != null && fieldWidth != null) {
     featureChips.push({
       key: 'fieldSize',
@@ -279,11 +317,48 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
       label: `${fieldLength} × ${fieldWidth} متر مربع`,
     });
   }
+  if (car) {
+    const seats = num(serviceAttrs, 'seats') ?? num(facilityAttrs, 'seats');
+    const year = num(serviceAttrs, 'year') ?? num(facilityAttrs, 'year');
+    const transmission =
+      typeof serviceAttrs.transmission === 'string'
+        ? serviceAttrs.transmission
+        : typeof facilityAttrs.transmission === 'string'
+          ? facilityAttrs.transmission
+          : undefined;
+    if (seats != null) {
+      featureChips.push({
+        key: 'seats',
+        icon: 'car-outline',
+        label: `${seats} مقاعد`,
+      });
+    }
+    if (year != null) {
+      featureChips.push({
+        key: 'year',
+        icon: 'calendar-outline',
+        label: `موديل ${year}`,
+      });
+    }
+    if (transmission) {
+      featureChips.push({
+        key: 'gear',
+        icon: 'settings-outline',
+        label: transmission === 'AUTO' ? 'أوتوماتيك' : 'عادي',
+      });
+    }
+  }
   if (supply) {
     featureChips.push({ key: 'qty', icon: 'cube-outline', label: 'حجز بالكمية' });
   }
   if (salon) {
     featureChips.push({ key: 'salon', icon: 'cut-outline', label: 'موعد مسبق' });
+  }
+  if (artist) {
+    featureChips.push({ key: 'artist', icon: 'musical-notes-outline', label: 'حجز يوم المناسبة' });
+  }
+  if (photo) {
+    featureChips.push({ key: 'photo', icon: 'camera-outline', label: 'جلسة تصوير' });
   }
 
   const spacesFromAttr = strList(attrs, 'spaces');
@@ -293,6 +368,23 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
   const customPolicy = strList(attrs, 'policyBullets');
   const customDepositNote =
     typeof attrs.depositNote === 'string' ? attrs.depositNote.trim() : '';
+
+  const serviceDefaults =
+    pool
+      ? SERVICE_FACILITY_DEFAULTS.pool
+      : health
+        ? SERVICE_FACILITY_DEFAULTS.health
+        : salon
+          ? SERVICE_FACILITY_DEFAULTS.salon
+          : car
+            ? SERVICE_FACILITY_DEFAULTS.car
+            : artist
+              ? SERVICE_FACILITY_DEFAULTS.artist
+              : photo
+                ? SERVICE_FACILITY_DEFAULTS.photo
+                : supply
+                  ? SERVICE_FACILITY_DEFAULTS.supply
+                  : null;
 
   const defaultSpaces: IconRow[] = hotel
     ? [
@@ -308,16 +400,17 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
         ]
       : hall
         ? []
-        : health
+        : sport
           ? [
-              { key: 'doc', icon: 'medkit-outline', label: 'كشف طبي' },
-              { key: 'lab', icon: 'flask-outline', label: 'تحاليل' },
+              { key: 'lights', icon: 'bulb-outline', label: 'إضاءة' },
+              { key: 'balls', icon: 'football-outline', label: 'كرات' },
             ]
-          : sport
-            ? [
-                { key: 'lights', icon: 'bulb-outline', label: 'إضاءة' },
-                { key: 'balls', icon: 'football-outline', label: 'كرات' },
-              ]
+          : serviceDefaults
+            ? serviceDefaults.spaces.map((label, i) => ({
+                key: `ds${i}`,
+                icon: iconForSpaceLabel(label),
+                label,
+              }))
             : [];
 
   const defaultAmenities: IconRow[] = hotel
@@ -334,7 +427,13 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
           { key: 'heat', icon: 'sunny-outline', label: 'فلترة ونظام تدفئة' },
           { key: 'screens', icon: 'tv-outline', label: 'شاشات' },
         ]
-      : [];
+      : serviceDefaults
+        ? serviceDefaults.amenities.map((label, i) => ({
+            key: `da${i}`,
+            icon: iconForAmenityLabel(label),
+            label,
+          }))
+        : [];
 
   if (attrs.pool === true && !defaultSpaces.some((s) => s.key === 'pool')) {
     defaultSpaces.unshift({ key: 'pool', icon: 'water-outline', label: 'مسبح خاص' });
@@ -429,11 +528,30 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
       timeLabel = `${num(a, 'slotMinutes')} دقيقة`;
     }
 
+    const seats = num(a, 'seats');
+    const duration =
+      num(a, 'slotMinutes') ?? num(a, 'durationMinutes');
+    const capacityLabel = car
+      ? seats != null
+        ? `${seats} مقاعد`
+        : undefined
+      : health || salon || photo
+        ? duration != null
+          ? `${duration} دقيقة`
+          : undefined
+        : artist
+          ? undefined
+          : guests != null
+            ? `${guests} أشخاص أو أقل`
+            : duration != null
+              ? `${duration} دقيقة`
+              : undefined;
+
     return {
       id: s.id,
       title: displayTitle,
       price: s.priceFrom ?? s.basePrice ?? 0,
-      capacityLabel: guests != null ? `${guests} أشخاص أو أقل` : undefined,
+      capacityLabel,
       timeLabel,
       period:
         period === 'MORNING' || period === 'EVENING' || period === 'PER_NIGHT'
@@ -446,8 +564,10 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
 
   let ctaLabel = 'استعراض الأيام المتفرغة';
   if (hotel) ctaLabel = 'استعراض الغرف';
-  else if (health || salon) ctaLabel = 'اختيار الموعد';
-  else if (sport) ctaLabel = 'اختيار الوقت والمدة';
+  else if (health || salon || photo) ctaLabel = 'اختيار الموعد';
+  else if (sport || pool) ctaLabel = 'اختيار الوقت والمدة';
+  else if (car) ctaLabel = 'اختيار أيام التأجير';
+  else if (artist) ctaLabel = 'استعراض الأيام المتفرغة';
   else if (supply) ctaLabel = 'تحديد الكمية';
 
   let aboutTitle = `عن ${cat}`;
@@ -456,9 +576,15 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
   else if (chalet) aboutTitle = 'عن الشاليهات';
   else if (hall) aboutTitle = 'عن القاعات';
   else if (sport) aboutTitle = 'عن الملعب';
+  else if (pool) aboutTitle = 'عن المسبح';
+  else if (health) aboutTitle = 'عن المنشأة الصحية';
+  else if (salon) aboutTitle = 'عن الصالون';
+  else if (car) aboutTitle = 'عن السيارات';
+  else if (artist) aboutTitle = 'عن الفنان';
+  else if (photo) aboutTitle = 'عن جلسة التصوير';
 
   const aboutText =
-    (hotel || hall ? provider.description : null) ||
+    (hotel || hall || serviceFacility ? provider.description : null) ||
     service?.description ||
     provider.description ||
     (hotel
@@ -492,7 +618,8 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
           ? 'سياسة الطيرمانات: مبلغ العربون لا يرجع مطلقاً'
           : chalet
             ? 'سياسة الشاليهات: مبلغ العربون لا يرجع مطلقاً'
-            : `عربون ${depositPct}% من قيمة الحجز`);
+            : serviceDefaults?.depositNote ||
+              `عربون ${depositPct}% من قيمة الحجز`);
 
   /** Insurance is optional — show only when the provider entered an amount. */
   const storedInsurance = num(attrs, 'insuranceAmount');
@@ -525,16 +652,29 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
     show360: chalet,
     tourUrl,
     showFeatureChips: featureChips.length > 0 && !hotel && !hall,
-    showSpaces: spaces.length > 0 && (stay || sport),
+    showSpaces: spaces.length > 0 && (stay || sport || serviceFacility),
     showAmenities: amenities.length > 0,
     showAddress: true,
     showRatingBanner: true,
-    showDeposit: stay || supply || Boolean(depositAmount),
-    showInsurance: (chalet || hall) && insuranceAmount != null,
-    showTerms: stay || hall,
-    // Sports with period bands use the ticket UI instead of package cards.
-    showPackages: packages.length > 0 && !hotel && !(sport && pricePeriods.length > 0),
-    showPricePeriods: sport && pricePeriods.length > 0,
+    showDeposit:
+      stay ||
+      supply ||
+      artist ||
+      car ||
+      Boolean(customDepositNote) ||
+      Boolean(depositAmount),
+    showInsurance: (chalet || hall || car) && insuranceAmount != null,
+    showTerms:
+      stay ||
+      hall ||
+      serviceFacility ||
+      customTerms.length > 0,
+    // Sports/pools with period bands use the ticket UI instead of package cards.
+    showPackages:
+      packages.length > 0 &&
+      !hotel &&
+      !((sport || pool) && pricePeriods.length > 0),
+    showPricePeriods: (sport || pool) && pricePeriods.length > 0,
     pricePeriods,
     featureChips,
     spaces,
@@ -559,7 +699,7 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
                 'الالتزام بنظافة الأثاث قبل المغادرة',
                 'يُطلب إحضار عقد الزواج وبطاقات الهوية للأزواج بدون أطفال',
               ]
-            : [],
+            : serviceDefaults?.terms ?? [],
     policyBullets: customPolicy.length
       ? customPolicy
       : hotel

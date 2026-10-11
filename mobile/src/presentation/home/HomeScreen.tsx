@@ -37,6 +37,7 @@ import { TopRatedCard } from './components/TopRatedCard';
 import { TrustBanner } from './components/TrustBanner';
 import { CityPickerSheet } from './components/CityPickerSheet';
 import { handlePromoSlidePress } from './bannerNavigation';
+import { facilityRating } from './facilityRating';
 
 const FALLBACK_CITIES: Destination[] = [
   { id: 1, name: 'صنعاء' },
@@ -239,8 +240,14 @@ export function HomeScreen() {
 
   const topRated = useMemo(() => {
     if (hasSearch) return [];
-    const rest = providers.slice(0, 10);
-    return rest.length > 3 ? rest.slice(0, 8) : rest;
+    return [...providers]
+      .sort((a, b) => {
+        const ra = a.reviewCount && a.reviewCount > 0 ? (a.rating ?? 0) : 0;
+        const rb = b.reviewCount && b.reviewCount > 0 ? (b.rating ?? 0) : 0;
+        if (rb !== ra) return rb - ra;
+        return (b.reviewCount ?? 0) - (a.reviewCount ?? 0);
+      })
+      .slice(0, 8);
   }, [providers, hasSearch]);
 
   const runSearch = () => {
@@ -367,7 +374,8 @@ export function HomeScreen() {
                     regionName: provider.regionName ?? provider.region?.name,
                     addressDetails: provider.addressDetails,
                     categoryName: provider.categoryName ?? provider.category?.name,
-                    rating: provider.rating ?? 4.8,
+                    rating: facilityRating(provider),
+                    reviewCount: provider.reviewCount ?? 0,
                     verified: provider.verified !== false,
                   }}
                   onPress={() => openProvider(provider.id)}
@@ -402,7 +410,8 @@ export function HomeScreen() {
                       categoryName ||
                       provider.cityName
                     }
-                    rating={provider.rating ?? 4.7}
+                    rating={facilityRating(provider)}
+                    reviewCount={provider.reviewCount ?? 0}
                     price={price}
                     depositPercentage={30}
                     categoryLabel={shortCategoryLabel(categoryName)}

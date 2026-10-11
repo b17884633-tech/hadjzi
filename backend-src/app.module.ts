@@ -10,6 +10,7 @@ import paymentConfig from './config/payment.config';
 import redisConfig from './config/redis.config';
 import cloudinaryConfig from './config/cloudinary.config';
 import messagingConfig from './config/messaging.config';
+import firebaseConfig from './config/firebase.config';
 import { AuthGuard } from './common/guards/auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -42,6 +43,7 @@ import { AdminModule } from './modules/admin/admin.module';
         redisConfig,
         cloudinaryConfig,
         messagingConfig,
+        firebaseConfig,
       ],
     }),
     // Global ceiling; auth routes override with a stricter @Throttle.

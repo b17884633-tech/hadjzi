@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -15,6 +15,12 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '../../core/ui/theme';
 import { useApp } from '../../di/AppProvider';
+import {
+  confirmFirebasePhoneOtp,
+  mapFirebaseAuthError,
+  sendFirebasePhoneOtp,
+  type FirebaseConfirmation,
+} from '../../data/remote/firebasePhoneAuth';
 import { AuthStackParamList } from '../navigation/types';
 import { CountryPickerSheet } from './CountryPickerSheet';
 import { OtpVerifySheet } from './OtpVerifySheet';
@@ -35,6 +41,11 @@ export function LoginScreen({ navigation }: Props) {
   const [otpLoading, setOtpLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [otpError, setOtpError] = useState<string | null>(null);
+  const firebaseConfirmRef = useRef<FirebaseConfirmation | null>(null);
+
+  const sendSmsViaFirebase = async (phone: string) => {
+    firebaseConfirmRef.current = await sendFirebasePhoneOtp(phone);
+  };
 
   const requestOtp = async () => {
     const phone = buildE164(country.dialCode, national);
@@ -50,10 +61,19 @@ export function LoginScreen({ navigation }: Props) {
         navigation.navigate('Register', { phone, channel });
         return;
       }
+      if (channel === 'SMS') {
+        await sendSmsViaFirebase(phone);
+      }
       setFullPhone(phone);
       setOtpOpen(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'تعذر إرسال رمز التحقق');
+      setError(
+        channel === 'SMS'
+          ? mapFirebaseAuthError(e)
+          : e instanceof Error
+            ? e.message
+            : 'تعذر إرسال رمز التحقق',
+      );
     } finally {
       setLoading(false);
     }
@@ -63,12 +83,35 @@ export function LoginScreen({ navigation }: Props) {
     setOtpLoading(true);
     setOtpError(null);
     try {
-      const tokens = await container.authRepository.verifyOtp(fullPhone, code);
-      setUser(tokens.user);
+      if (channel === 'SMS') {
+        const confirmation = firebaseConfirmRef.current;
+        if (!confirmation) {
+          throw new Error('أعد إرسال رمز التحقق');
+        }
+        const idToken = await confirmFirebasePhoneOtp(confirmation, code);
+        const tokens = await container.authRepository.loginWithFirebase({
+          idToken,
+        });
+        if ('kind' in tokens && tokens.kind === 'requires_register') {
+          setOtpOpen(false);
+          navigation.navigate('Register', { phone: fullPhone, channel });
+          return;
+        }
+        setUser(tokens.user);
+      } else {
+        const tokens = await container.authRepository.verifyOtp(fullPhone, code);
+        setUser(tokens.user);
+      }
       setOtpOpen(false);
       navigation.getParent()?.goBack();
     } catch (e) {
-      setOtpError(e instanceof Error ? e.message : 'رمز التحقق غير صحيح');
+      setOtpError(
+        channel === 'SMS'
+          ? mapFirebaseAuthError(e)
+          : e instanceof Error
+            ? e.message
+            : 'رمز التحقق غير صحيح',
+      );
     } finally {
       setOtpLoading(false);
     }
@@ -77,9 +120,19 @@ export function LoginScreen({ navigation }: Props) {
   const resend = async () => {
     setOtpError(null);
     try {
-      await container.authRepository.requestPhoneLogin(fullPhone, channel);
+      if (channel === 'SMS') {
+        await sendSmsViaFirebase(fullPhone);
+      } else {
+        await container.authRepository.requestPhoneLogin(fullPhone, channel);
+      }
     } catch (e) {
-      setOtpError(e instanceof Error ? e.message : 'تعذر إعادة الإرسال');
+      setOtpError(
+        channel === 'SMS'
+          ? mapFirebaseAuthError(e)
+          : e instanceof Error
+            ? e.message
+            : 'تعذر إعادة الإرسال',
+      );
     }
   };
 

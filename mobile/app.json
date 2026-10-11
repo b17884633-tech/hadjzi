@@ -23,6 +23,7 @@
     },
     "android": {
       "package": "com.platform.booking",
+      "googleServicesFile": "./google-services.json",
       "supportsRTL": true,
       "usesCleartextTraffic": true,
       "softwareKeyboardLayoutMode": "resize",
@@ -35,7 +36,7 @@
       "barStyle": "dark-content"
     },
     "extra": {
-      "apiBaseUrl": "https://hadjzi.onrender.com/api",
+      "apiBaseUrl": "http://localhost:3000/api",
       "expo-navigation-bar": {
         "enforceContrast": false,
         "style": "dark"
@@ -57,7 +58,9 @@
           "style": "dark"
         }
       ],
-      "react-native-maps"
+      "react-native-maps",
+      "@react-native-firebase/app",
+      "@react-native-firebase/auth"
     ]
   }
 }

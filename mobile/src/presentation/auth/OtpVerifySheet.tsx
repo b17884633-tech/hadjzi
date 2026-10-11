@@ -92,6 +92,7 @@ export function OtpVerifySheet({
         </View>
 
         <Pressable style={styles.codeBox} onPress={() => inputRef.current?.focus()}>
+          {/* OTP digits are LTR even in an RTL app */}
           <View style={styles.dots}>
             {Array.from({ length: 6 }, (_, i) => {
               const digit = code[i];
@@ -114,6 +115,7 @@ export function OtpVerifySheet({
             maxLength={6}
             style={styles.hiddenInput}
             caretHidden
+            textAlign="left"
           />
         </Pressable>
 
@@ -219,6 +221,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   dots: {
+    direction: 'ltr',
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 14,
@@ -239,12 +242,14 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '800',
     color: theme.colors.text,
+    writingDirection: 'ltr',
   },
   hiddenInput: {
     position: 'absolute',
     opacity: 0,
     width: 1,
     height: 1,
+    writingDirection: 'ltr',
   },
   error: {
     fontSize: 13,

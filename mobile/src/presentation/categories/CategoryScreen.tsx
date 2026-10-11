@@ -28,6 +28,7 @@ import { FeaturedOfferCard } from '../home/components/FeaturedOfferCard';
 import { HeroPromoBanner, PromoSlide } from '../home/components/HeroPromoBanner';
 import { TopRatedCard } from '../home/components/TopRatedCard';
 import { handlePromoSlidePress } from '../home/bannerNavigation';
+import { facilityRating } from '../home/facilityRating';
 import { CategoryFiltersSheet } from './CategoryFiltersSheet';
 import {
   CategoryFilterValues,
@@ -148,7 +149,12 @@ export function CategoryScreen({ route, navigation }: Props) {
   const topRated = useMemo(
     () =>
       [...filtered]
-        .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+        .sort((a, b) => {
+          const ra = a.reviewCount && a.reviewCount > 0 ? (a.rating ?? 0) : 0;
+          const rb = b.reviewCount && b.reviewCount > 0 ? (b.rating ?? 0) : 0;
+          if (rb !== ra) return rb - ra;
+          return (b.reviewCount ?? 0) - (a.reviewCount ?? 0);
+        })
         .slice(0, 6),
     [filtered],
   );
@@ -334,7 +340,8 @@ export function CategoryScreen({ route, navigation }: Props) {
                     regionName: provider.regionName ?? provider.region?.name,
                     addressDetails: provider.addressDetails,
                     categoryName: provider.categoryName ?? provider.category?.name,
-                    rating: provider.rating ?? 4.8,
+                    rating: facilityRating(provider),
+                    reviewCount: provider.reviewCount ?? 0,
                     verified: provider.verified !== false,
                   }}
                   onPress={() => openProvider(provider.id)}
@@ -364,7 +371,8 @@ export function CategoryScreen({ route, navigation }: Props) {
                     categoryName ||
                     provider.cityName
                   }
-                  rating={provider.rating ?? 4.7}
+                  rating={facilityRating(provider)}
+                  reviewCount={provider.reviewCount ?? 0}
                   price={price}
                   depositPercentage={30}
                   categoryLabel={categoryName?.slice(0, 12) ?? 'خدمة'}

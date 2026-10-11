@@ -33,3 +33,10 @@ services:
         sync: false
       - key: CLOUDINARY_FOLDER
         value: hadjzi
+      # Firebase Admin — required to verify Phone Auth ID tokens from the app
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false

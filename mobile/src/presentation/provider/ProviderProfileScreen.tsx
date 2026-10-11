@@ -549,6 +549,7 @@ export function ProviderProfileScreen() {
                   latitude={mapCoords.latitude}
                   longitude={mapCoords.longitude}
                   height={160}
+                  label="فتح الموقع على الخريطة"
                 />
               </Pressable>
             </>

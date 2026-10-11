@@ -117,6 +117,7 @@ export function FavoritesScreen() {
                     addressDetails: item.addressDetails,
                     categoryName: item.categoryName,
                     rating: item.rating,
+                    reviewCount: item.rating != null ? 1 : 0,
                     verified: item.verified !== false,
                   }}
                   onPress={() =>

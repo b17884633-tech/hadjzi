@@ -30,6 +30,7 @@ import { theme } from '../../core/ui/theme';
 import { useApp } from '../../di/AppProvider';
 import { RootStackParamList } from '../navigation/types';
 import { CloudinaryImagePicker } from './CloudinaryImagePicker';
+import { resolveFacilityKind } from './categoryKinds';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ProviderServiceForm'>;
 
@@ -58,29 +59,6 @@ const DEFAULT_PERIOD_TIMES: Record<
   MORNING: { from: '08:00', to: '16:00' },
   EVENING: { from: '16:00', to: '00:00' },
 };
-
-function isHotelCategory(name?: string | null) {
-  return /فنادق|فندق|hotel/i.test(name ?? '');
-}
-
-function isTairamanCategory(name?: string | null) {
-  return /طيرمان|طرمان|tairaman/i.test(name ?? '');
-}
-
-/** Same package form as chalets. */
-function isChaletCategory(name?: string | null) {
-  return /شالي|chalet/i.test(name ?? '') || isTairamanCategory(name);
-}
-
-function isHallCategory(name?: string | null) {
-  return /صالة|قاعة|صالات|قاعات|hall|wedding|زفاف/i.test(name ?? '');
-}
-
-function isSportCategory(name?: string | null) {
-  return /ملاعب|ملعب|مسبح|نادي|كرة|بادل|رياض|padel|football|sport/i.test(
-    name ?? '',
-  );
-}
 
 function toOptionalNum(v: unknown): number | undefined {
   if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
@@ -133,6 +111,12 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
   const [isTairaman, setIsTairaman] = useState(false);
   const [isHall, setIsHall] = useState(false);
   const [isSport, setIsSport] = useState(false);
+  const [isPool, setIsPool] = useState(false);
+  const [isHealth, setIsHealth] = useState(false);
+  const [isSalon, setIsSalon] = useState(false);
+  const [isCar, setIsCar] = useState(false);
+  const [isArtist, setIsArtist] = useState(false);
+  const [isPhoto, setIsPhoto] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [basePrice, setBasePrice] = useState('');
@@ -140,6 +124,10 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
   const [capacity, setCapacity] = useState<number | undefined>();
   const [maxChildren, setMaxChildren] = useState<number | undefined>();
   const [beds, setBeds] = useState<number | undefined>();
+  const [slotMinutes, setSlotMinutes] = useState<number | undefined>(30);
+  const [seats, setSeats] = useState<number | undefined>(5);
+  const [carYear, setCarYear] = useState('');
+  const [transmission, setTransmission] = useState<'AUTO' | 'MANUAL'>('AUTO');
   const [period, setPeriod] = useState<PackagePeriod>('PER_NIGHT');
   const [fromTime, setFromTime] = useState(DEFAULT_PERIOD_TIMES.MORNING.from);
   const [toTime, setToTime] = useState(DEFAULT_PERIOD_TIMES.MORNING.to);
@@ -160,23 +148,29 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
       const facility = await container.providerApi.getMineById(providerId);
       const catName =
         facility.categoryName ?? facility.category?.name ?? undefined;
-      const hotel = isHotelCategory(catName);
-      const tairaman =
-        isTairamanCategory(catName) ||
-        isTairamanCategory(facility.category?.name);
-      const chalet =
-        isChaletCategory(catName) ||
-        isChaletCategory(facility.category?.name) ||
-        tairaman;
-      const hall =
-        isHallCategory(catName) || isHallCategory(facility.category?.name);
-      const sport =
-        isSportCategory(catName) || isSportCategory(facility.category?.name);
+      const kind = resolveFacilityKind(catName, facility.category?.name);
+      const hotel = kind === 'hotel';
+      const tairaman = kind === 'tairaman';
+      const chalet = kind === 'chalet' || tairaman;
+      const hall = kind === 'hall';
+      const sport = kind === 'sport';
+      const pool = kind === 'pool';
+      const health = kind === 'health';
+      const salon = kind === 'salon';
+      const car = kind === 'car';
+      const artist = kind === 'artist';
+      const photo = kind === 'photo';
       setIsHotel(hotel);
       setIsChalet(chalet);
       setIsTairaman(tairaman);
       setIsHall(hall);
       setIsSport(sport);
+      setIsPool(pool);
+      setIsHealth(health);
+      setIsSalon(salon);
+      setIsCar(car);
+      setIsArtist(artist);
+      setIsPhoto(photo);
       setFacilityBusinessName(facility.businessName?.trim() || '');
       const fa = (facility.attributes ?? {}) as Record<string, unknown>;
       setFacilityMaxGuests(
@@ -197,7 +191,15 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         const list = await container.serviceApi.listMine(providerId);
         const svc = list.find((s) => s.id === serviceId);
         if (!svc) {
-          setError(chalet ? 'الباقة غير موجودة' : hotel ? 'الغرفة غير موجودة' : 'الخدمة غير موجودة');
+          setError(
+            chalet || hall || artist
+              ? 'الباقة غير موجودة'
+              : hotel
+                ? 'الغرفة غير موجودة'
+                : car
+                  ? 'السيارة غير موجودة'
+                  : 'الخدمة غير موجودة',
+          );
           return;
         }
         setName(svc.name);
@@ -205,7 +207,7 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         setBasePrice(String(svc.basePrice ?? ''));
         setImages(svc.images ?? []);
         const a = svc.attributes ?? {};
-        if ((!chalet || tairaman) && !sport) {
+        if ((!chalet || tairaman) && !sport && !pool) {
           setCapacity(toOptionalNum(a.capacity) ?? toOptionalNum(a.guests));
           if (hotel) {
             setMaxChildren(
@@ -214,13 +216,27 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
                 0,
             );
           }
-          if (!tairaman) {
+          if (!tairaman && !artist && !car) {
             setBeds(
               toOptionalNum(a.beds) ??
                 toOptionalNum(a.rooms) ??
                 toOptionalNum(a.bedrooms),
             );
           }
+        }
+        if (health || salon || photo) {
+          setSlotMinutes(
+            toOptionalNum(a.slotMinutes) ??
+              toOptionalNum(a.durationMinutes) ??
+              toOptionalNum(svc.durationMinutes) ??
+              30,
+          );
+        }
+        if (car) {
+          setSeats(toOptionalNum(a.seats) ?? 5);
+          const y = toOptionalNum(a.year);
+          setCarYear(y != null ? String(y) : '');
+          setTransmission(a.transmission === 'MANUAL' ? 'MANUAL' : 'AUTO');
         }
         if (tairaman) {
           const units =
@@ -231,7 +247,7 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         }
         const storedPeriod = parseStoredPeriod(a);
         setPeriod(storedPeriod);
-        if (tairaman || hall) {
+        if (tairaman || hall || artist) {
           setFromTime(
             typeof a.fromTime === 'string' && a.fromTime.trim()
               ? String(a.fromTime).slice(0, 5)
@@ -267,7 +283,7 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
           setInventory(facilityUnits > 0 ? facilityUnits : 1);
         }
 
-        if (sport) {
+        if (sport || pool) {
           const savedPeriods = parsePricePeriods(a.pricePeriods);
           setPricePeriods(
             savedPeriods.length
@@ -283,10 +299,10 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
           SAR: saved.SAR != null ? String(saved.SAR) : '',
           USD: saved.USD != null ? String(saved.USD) : '',
         });
-      } else if (sport) {
+      } else if (sport || pool) {
         setPricePeriods(defaultSportPricePeriods(5000));
         setName(facility.businessName?.trim() || 'باقة أسعار');
-      } else if (hall || tairaman) {
+      } else if (hall || artist || tairaman) {
         setFromTime('10:00');
         setToTime('21:00');
         if (tairaman) {
@@ -295,6 +311,11 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         }
       } else if (hotel) {
         setMaxChildren(0);
+      } else if (health || salon || photo) {
+        setSlotMinutes(30);
+      } else if (car) {
+        setSeats(5);
+        setInventory(1);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'تعذر التحميل');
@@ -320,21 +341,30 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
     }
   };
 
-  const useMultiCurrency = isHotel || isChalet || isHall;
+  const isHourlyPeriods = isSport || isPool;
+  const isEventPackage = isHall || isArtist;
+  const isAppointment = isHealth || isSalon || isPhoto;
+  const useMultiCurrency = isHotel || isChalet || isHall || isArtist || isCar;
   const entityLabel = isHotel
     ? 'الغرفة'
-    : isChalet || isHall
+    : isChalet || isEventPackage
       ? 'الباقة'
-      : isSport
+      : isHourlyPeriods
         ? 'فترات الأسعار'
-        : 'الخدمة';
+        : isCar
+          ? 'السيارة'
+          : isAppointment
+            ? 'الخدمة'
+            : 'الخدمة';
   const entityLabelIndef = isHotel
     ? 'غرفة'
-    : isChalet || isHall
+    : isChalet || isEventPackage
       ? 'باقة'
-      : isSport
+      : isHourlyPeriods
         ? 'فترات الأسعار'
-        : 'خدمة';
+        : isCar
+          ? 'سيارة'
+          : 'خدمة';
 
   const updatePeriod = (id: string, patch: Partial<PricePeriod>) => {
     setPricePeriods((prev) =>
@@ -364,11 +394,11 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
   };
 
   const submit = async () => {
-    // Sport packages inherit identity from the facility form.
-    const trimmed = isSport
+    // Sport/pool packages inherit identity from the facility form.
+    const trimmed = isHourlyPeriods
       ? name.trim() || facilityBusinessName || 'باقة أسعار'
       : name.trim();
-    if (!isSport && !trimmed) {
+    if (!isHourlyPeriods && !trimmed) {
       setError(`أدخل اسم ${entityLabelIndef}`);
       return;
     }
@@ -377,9 +407,9 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
     let multiPrices: ServicePrices | undefined;
     let cleanedPeriods: PricePeriod[] | undefined;
 
-    if (isSport) {
+    if (isHourlyPeriods) {
       if (!pricePeriods.length) {
-        setError('أضف فترة سعر واحدةحة على الأقل');
+        setError('أضف فترة سعر واحة على الأقل');
         return;
       }
       cleanedPeriods = [];
@@ -432,7 +462,7 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
       return;
     }
     if (
-      (isHall || isTairaman) &&
+      (isEventPackage || isTairaman) &&
       (!isValidTime(fromTime) || !isValidTime(toTime))
     ) {
       setError('أدخل وقت البداية والنهاية بصيغة ساعة:دقيقة (مثال 10:00)');
@@ -444,6 +474,17 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
     }
     if (isTairaman && (!inventory || inventory < 1)) {
       setError('أدخل عدد الطيرمانات المتاحة لهذه الباقة');
+      return;
+    }
+    if (
+      isAppointment &&
+      (slotMinutes == null || slotMinutes < 5)
+    ) {
+      setError('أدخل مدة الخدمة بالدقائق (5 على الأقل)');
+      return;
+    }
+    if (isCar && (seats == null || seats < 1)) {
+      setError('أدخل عدد المقاعد');
       return;
     }
 
@@ -477,7 +518,7 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         // Unit count lives on the facility — mirror for calendar seed only.
         attributes.inventory = facilityInventory;
         attributes.units = facilityInventory;
-      } else if (isHall) {
+      } else if (isEventPackage) {
         attributes.fromTime = fromTime.trim();
         attributes.toTime = toTime.trim();
         if (capacity != null && capacity > 0) {
@@ -487,7 +528,7 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         }
         attributes.inventory = 1;
         attributes.units = 1;
-      } else if (isSport) {
+      } else if (isHourlyPeriods) {
         attributes.pricePeriods = cleanedPeriods;
         // Players / dimensions live on the facility — mirror for booking UI only.
         if (facilityMaxPlayers != null && facilityMaxPlayers > 0) {
@@ -497,6 +538,19 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
           attributes.maxPlayers = facilityMaxPlayers;
           attributes.maxGuests = facilityMaxPlayers;
         }
+      } else if (isAppointment) {
+        const mins = Math.max(5, Math.floor(Number(slotMinutes)));
+        attributes.slotMinutes = mins;
+        attributes.durationMinutes = mins;
+      } else if (isCar) {
+        const seatCount = Math.max(1, Math.floor(Number(seats)));
+        attributes.seats = seatCount;
+        attributes.transmission = transmission;
+        const year = toOptionalNum(carYear);
+        if (year != null) attributes.year = year;
+        else delete attributes.year;
+        attributes.inventory = Math.max(1, Math.floor(Number(inventory)));
+        attributes.units = attributes.inventory;
       } else {
         if (capacity != null && capacity > 0) {
           attributes.capacity = capacity;
@@ -527,11 +581,16 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
 
       const payload = {
         name: trimmed,
-        description: isSport ? undefined : description.trim() || undefined,
+        description: isHourlyPeriods ? undefined : description.trim() || undefined,
         basePrice: newYerPrice,
         depositPercentage: DEPOSIT_PERCENTAGE,
-        images: isSport ? [] : images,
+        images: isHourlyPeriods ? [] : images,
         attributes,
+        ...(isAppointment
+          ? {
+              durationMinutes: Math.max(5, Math.floor(Number(slotMinutes))),
+            }
+          : {}),
       };
 
       let id = serviceId;
@@ -545,7 +604,7 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         id = created.id;
       }
 
-      if (id && isSport) {
+      if (id && isHourlyPeriods) {
         const hours = hoursCoveredByPeriods(cleanedPeriods ?? pricePeriods);
         await container.serviceApi.seedHourlyAvailabilities(id, {
           days: 14,
@@ -554,12 +613,22 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
           endHour: (hours[hours.length - 1] ?? 21) + 1,
           totalCapacity: 1,
         });
-      } else if (id && (isHotel || isChalet || isHall || !isEdit)) {
+      } else if (id && isAppointment) {
+        await container.serviceApi.seedHourlyAvailabilities(id, {
+          days: 14,
+          startHour: 9,
+          endHour: 21,
+          totalCapacity: 1,
+        });
+      } else if (
+        id &&
+        (isHotel || isChalet || isEventPackage || isCar || !isEdit)
+      ) {
         const seedCap = isTairaman
           ? Math.max(1, Math.floor(Number(inventory)))
           : isChalet
             ? Math.max(1, facilityInventory)
-            : isHall
+            : isEventPackage
               ? 1
               : Math.max(1, inventory);
         await container.serviceApi.seedAvailabilities(id, {
@@ -600,7 +669,7 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         contentContainerStyle={styles.scroll}
         bottomOffset={72}
       >
-        {!isSport ? (
+        {!isHourlyPeriods ? (
           <CloudinaryImagePicker
             urls={images}
             onChange={setImages}
@@ -608,15 +677,25 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
           />
         ) : null}
 
-        {!isSport ? (
+        {!isHourlyPeriods ? (
           <View style={styles.card}>
-            {isHotel || isChalet ? (
+            {isHotel || isChalet || isEventPackage || isAppointment || isCar ? (
               <Text style={styles.hint}>
                 {isHotel
                   ? 'الغرف هي خدمات الفندق — تظهر في «استعراض الغرف» على صفحة التفاصيل.'
                   : isTairaman
                     ? 'الباقات هي خدمات الطيرمان — تظهر في قسم الباقات على صفحة التفاصيل.'
-                    : 'الباقات هي خدمات الشاليه — تظهر في قسم «الغرف والباقات» على صفحة التفاصيل.'}
+                    : isChalet
+                      ? 'الباقات هي خدمات الشاليه — تظهر في قسم «الغرف والباقات» على صفحة التفاصيل.'
+                      : isHall
+                        ? 'الباقات تظهر في صفحة القاعة مع السعة ووقت المناسبة.'
+                        : isArtist
+                          ? 'باقات الحفل تظهر مع وقت التواجد في صفحة الفنان.'
+                          : isAppointment
+                            ? 'كل خدمة لها مدة وسعر — تظهر مواعيدها للعميل عند الحجز.'
+                            : isCar
+                              ? 'كل سيارة لها مقاعد وموديل وناقل حركة — تُحجز بأيام الاستلام/الإرجاع.'
+                              : null}
               </Text>
             ) : null}
 
@@ -633,7 +712,19 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
                       ? 'مثال: ليلة في الطيرمان'
                       : isChalet
                         ? 'مثال: ليلة في الشاليه'
-                        : 'اسم الخدمة'
+                        : isHall
+                          ? 'مثال: باقة الزفاف'
+                          : isArtist
+                            ? 'مثال: زفّة كاملة'
+                            : isHealth
+                              ? 'مثال: كشف عام'
+                              : isSalon
+                                ? 'مثال: قص وتصفيف'
+                                : isPhoto
+                                  ? 'مثال: جلسة تصوير عروس'
+                                  : isCar
+                                    ? 'مثال: تويوتا كامري'
+                                    : 'اسم الخدمة'
                 }
                 placeholderTextColor={theme.colors.textSecondary}
                 textAlign="right"
@@ -649,9 +740,13 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
                 placeholder={
                   isHotel
                     ? 'وصف الغرفة والمرافق'
-                    : isChalet
+                    : isChalet || isEventPackage
                       ? 'وصف الباقة وما تشمله'
-                      : 'وصف الخدمة'
+                      : isAppointment
+                        ? 'وصف الخدمة وما تشمله'
+                        : isCar
+                          ? 'وصف السيارة ومواصفاتها'
+                          : 'وصف الخدمة'
                 }
                 placeholderTextColor={theme.colors.textSecondary}
                 textAlign="right"
@@ -662,21 +757,23 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         ) : (
           <View style={styles.card}>
             <Text style={styles.hint}>
-              الاسم والصور والوصف وعدد اللاعبين وأبعاد الملعب تُضبط من تفاصيل
-              المنشأة. هنا تُضاف فترات الأسعار فقط.
+              {isPool
+                ? 'الاسم والصور والوصف وسعة المسبح تُضبط من تفاصيل المنشأة. هنا تُضاف فترات الأسعار فقط.'
+                : 'الاسم والصور والوصف وعدد اللاعبين وأبعاد الملعب تُضبط من تفاصيل المنشأة. هنا تُضاف فترات الأسعار فقط.'}
             </Text>
           </View>
         )}
 
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>
-            {isSport ? 'تفاصيل الأسعار' : 'الأسعار'}
+            {isHourlyPeriods ? 'تفاصيل الأسعار' : 'الأسعار'}
           </Text>
-          {isSport ? (
+          {isHourlyPeriods ? (
             <>
               <Text style={styles.hint}>
-                حدّد فترات الملعب وسعر الساعة لكل فترة. يظهر للعميل كبطاقة أسعار،
-                ويُحسب الحجز حسب الفترة المختارة.
+                {isPool
+                  ? 'حدّد فترات المسبح وسعر الساعة لكل فترة. يظهر للعميل كبطاقة أسعار.'
+                  : 'حدّد فترات الملعب وسعر الساعة لكل فترة. يظهر للعميل كبطاقة أسعار، ويُحسب الحجز حسب الفترة المختارة.'}
               </Text>
               {pricePeriods.map((p, index) => (
                 <View key={p.id} style={styles.periodCard}>
@@ -796,15 +893,17 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
             العربون ثابت {DEPOSIT_PERCENTAGE}% لجميع{' '}
             {isHotel
               ? 'الغرف'
-              : isChalet || isHall
+              : isChalet || isEventPackage
                 ? 'الباقات'
-                : isSport
+                : isHourlyPeriods
                   ? 'الحجوزات'
-                  : 'الخدمات'}
+                  : isCar
+                    ? 'السيارات'
+                    : 'الخدمات'}
           </Text>
         </View>
 
-        {!isSport ? (
+        {!isHourlyPeriods ? (
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>التفاصيل</Text>
             {isChalet && !isTairaman ? (
@@ -821,6 +920,21 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
             {isHall ? (
               <Text style={styles.hint}>
                 أدخل اسم الباقة والسعة ووقت المناسبة — تظهر كما هي في صفحة الصالة.
+              </Text>
+            ) : null}
+            {isArtist ? (
+              <Text style={styles.hint}>
+                أدخل وقت التواجد من–إلى — يظهر للعميل ويُقفل اليوم بعد دفع العربون.
+              </Text>
+            ) : null}
+            {isAppointment ? (
+              <Text style={styles.hint}>
+                مدة الخدمة تحدد طول الموعد في جدول الحجوزات.
+              </Text>
+            ) : null}
+            {isCar ? (
+              <Text style={styles.hint}>
+                مواصفات السيارة تظهر كشرائح في صفحة التفاصيل وعند الحجز.
               </Text>
             ) : null}
             <View style={styles.steppers}>
@@ -892,15 +1006,17 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
                     المنشأة.
                   </Text>
                 </>
-              ) : isTairaman || isHall ? (
+              ) : isTairaman || isEventPackage ? (
                 <>
-                  <QuantityStepper
-                    label="السعة (أشخاص أو أقل)"
-                    value={capacity}
-                    onChange={setCapacity}
-                    min={1}
-                    maxLength={6}
-                  />
+                  {(isHall || isTairaman) ? (
+                    <QuantityStepper
+                      label="السعة (أشخاص أو أقل)"
+                      value={capacity}
+                      onChange={setCapacity}
+                      min={1}
+                      maxLength={6}
+                    />
+                  ) : null}
                   {isTairaman ? (
                     <QuantityStepper
                       label="عدد الطيرمانات المتاحة لهذه الباقة"
@@ -939,6 +1055,70 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
                     </View>
                   </View>
                 </>
+              ) : isAppointment ? (
+                <QuantityStepper
+                  label="مدة الخدمة (دقيقة)"
+                  value={slotMinutes}
+                  onChange={setSlotMinutes}
+                  min={5}
+                />
+              ) : isCar ? (
+                <>
+                  <QuantityStepper
+                    label="عدد المقاعد"
+                    value={seats}
+                    onChange={setSeats}
+                    min={1}
+                  />
+                  <View style={styles.field}>
+                    <Text style={styles.label}>سنة الموديل</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={carYear}
+                      onChangeText={setCarYear}
+                      keyboardType="number-pad"
+                      placeholder="2024"
+                      placeholderTextColor={theme.colors.textSecondary}
+                      textAlign="right"
+                      maxLength={4}
+                    />
+                  </View>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>ناقل الحركة</Text>
+                    <View style={styles.periodRow}>
+                      {(
+                        [
+                          { id: 'AUTO' as const, label: 'أوتوماتيك' },
+                          { id: 'MANUAL' as const, label: 'عادي' },
+                        ] as const
+                      ).map((opt) => {
+                        const selected = transmission === opt.id;
+                        return (
+                          <Pressable
+                            key={opt.id}
+                            style={[styles.periodChip, selected && styles.periodChipOn]}
+                            onPress={() => setTransmission(opt.id)}
+                          >
+                            <Text
+                              style={[
+                                styles.periodChipText,
+                                selected && styles.periodChipTextOn,
+                              ]}
+                            >
+                              {opt.label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </View>
+                  <QuantityStepper
+                    label="عدد السيارات من هذا النوع"
+                    value={inventory}
+                    onChange={(n) => setInventory(Math.max(1, n ?? 1))}
+                    min={1}
+                  />
+                </>
               ) : (
                 <>
                   <QuantityStepper
@@ -971,7 +1151,9 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
               )}
             </View>
             <Text style={styles.meta}>
-              يُفتح التقويم تلقائياً لـ {SEED_DAYS} يوماً القادمة
+              {isAppointment
+                ? 'يُفتح جدول المواعيد تلقائياً لـ 14 يوماً القادمة'
+                : `يُفتح التقويم تلقائياً لـ ${SEED_DAYS} يوماً القادمة`}
             </Text>
           </View>
         ) : (

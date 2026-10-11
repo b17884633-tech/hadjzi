@@ -34,6 +34,13 @@ import {
 import { CloudinaryImagePicker } from './CloudinaryImagePicker';
 import { DynamicLineList } from './DynamicLineList';
 import { OptionPickerSheet } from './OptionPickerSheet';
+import {
+  isChaletCategory,
+  isHotelCategory,
+  resolveFacilityKind,
+  SERVICE_FACILITY_DEFAULTS,
+  type FacilityKind,
+} from './categoryKinds';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ProviderFacilityForm'>;
 
@@ -89,30 +96,8 @@ const DEFAULT_HALL_DEPOSIT =
 const DEFAULT_INSURANCE_META = 'قطعة ذهب';
 const DEFAULT_INSURANCE_NOTE =
   'يدفع مبلغ التأمين للإدارة عند الوصول ويُسترجع بعد انتهاء الحجز بشرط سلامة الممتلكات حسب سياسة المنشأة.';
-
-function isHotelCategory(name?: string | null) {
-  return /فنادق|فندق|hotel/i.test(name ?? '');
-}
-
-function isTairamanCategory(name?: string | null) {
-  return /طيرمان|طرمان|tairaman/i.test(name ?? '');
-}
-
-/** Same facility form as chalets (spaces, rooms, insurance, packages…). */
-function isChaletCategory(name?: string | null) {
-  return /شالي|chalet/i.test(name ?? '') || isTairamanCategory(name);
-}
-
-function isHallCategory(name?: string | null) {
-  return /صالة|قاعة|صالات|قاعات|hall|wedding|زفاف/i.test(name ?? '');
-}
-
-function isSportCategory(name?: string | null) {
-  // ملاعب (plural) ≠ ملعب (singular) — must list both.
-  return /ملاعب|ملعب|مسبح|نادي|كرة|بادل|رياض|padel|football|sport/i.test(
-    name ?? '',
-  );
-}
+const DEFAULT_CAR_INSURANCE_NOTE =
+  'يُسترجع مبلغ التأمين بعد فحص السيارة عند الإرجاع بشرط سلامتها.';
 
 function linesToList(text: string): string[] {
   return text
@@ -267,32 +252,44 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
   // Hotel/chalet/hall templates follow the root category (or locked API name).
   const categoryName =
     parentCategory?.name ?? selectedCategory?.name ?? lockedCategoryName;
-  const isHotel = isHotelCategory(categoryName);
-  const isTairaman =
-    isTairamanCategory(categoryName) ||
-    isTairamanCategory(parentCategory?.name) ||
-    isTairamanCategory(selectedCategory?.name) ||
-    isTairamanCategory(lockedCategoryName);
-  const isChalet =
-    isChaletCategory(categoryName) ||
-    isChaletCategory(parentCategory?.name) ||
-    isChaletCategory(selectedCategory?.name) ||
-    isChaletCategory(lockedCategoryName) ||
-    isTairaman;
-  const isHall =
-    isHallCategory(categoryName) ||
-    isHallCategory(parentCategory?.name) ||
-    isHallCategory(selectedCategory?.name) ||
-    isHallCategory(lockedCategoryName);
+  const kindNames = [
+    categoryName,
+    parentCategory?.name,
+    selectedCategory?.name,
+    lockedCategoryName,
+  ];
+  const facilityKind = resolveFacilityKind(...kindNames);
+  const isHotel = facilityKind === 'hotel';
+  const isTairaman = facilityKind === 'tairaman';
+  const isChalet = facilityKind === 'chalet' || isTairaman;
+  const isHall = facilityKind === 'hall';
+  const isSport = facilityKind === 'sport';
+  const isPool = facilityKind === 'pool';
+  const isHealth = facilityKind === 'health';
+  const isSalon = facilityKind === 'salon';
+  const isCar = facilityKind === 'car';
+  const isArtist = facilityKind === 'artist';
+  const isPhoto = facilityKind === 'photo';
   const stayNoun = isTairaman ? 'طيرمان' : 'شاليه';
   const stayNounPlural = isTairaman ? 'الطيرمانات' : 'الشاليهات';
-  // Match parent or subcategory (e.g. الملاعب / كرة قدم).
-  const isSport =
-    isSportCategory(categoryName) ||
-    isSportCategory(parentCategory?.name) ||
-    isSportCategory(selectedCategory?.name);
-  const hasDetailCard = isHotel || isChalet || isHall || isSport;
-  const showInsuranceFields = isChalet || isHall;
+  const serviceDefaults =
+    facilityKind in SERVICE_FACILITY_DEFAULTS
+      ? SERVICE_FACILITY_DEFAULTS[
+          facilityKind as keyof typeof SERVICE_FACILITY_DEFAULTS
+        ]
+      : null;
+  const hasDetailCard =
+    isHotel ||
+    isChalet ||
+    isHall ||
+    isSport ||
+    isPool ||
+    isHealth ||
+    isSalon ||
+    isCar ||
+    isArtist ||
+    isPhoto;
+  const showInsuranceFields = isChalet || isHall || isCar;
   const playersPerSide =
     maxPlayers != null && maxPlayers > 0 ? Math.floor(maxPlayers / 2) : undefined;
   const showSubCategoryField =
@@ -313,123 +310,103 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
     }
   }, [categories, categoryTree]);
 
-  const applyCategoryDefaults = useCallback(
-    (kind: 'hotel' | 'chalet' | 'tairaman' | 'hall' | 'sport' | 'other') => {
-      if (kind === 'hotel') {
-        setSpaces(DEFAULT_HOTEL_SPACES);
-        setAmenities(DEFAULT_HOTEL_AMENITIES);
-        setDepositNote(DEFAULT_HOTEL_DEPOSIT);
-        setTermsText(listToLines(DEFAULT_HOTEL_TERMS));
-        setPolicyText(listToLines(DEFAULT_HOTEL_POLICY));
-        setMaxGuests(undefined);
-        setBathrooms(undefined);
-        setBedrooms(undefined);
-        setMajlis(undefined);
-        setMaxPlayers(undefined);
-        setFieldLength('');
-        setFieldWidth('');
-        setInsuranceAmount('');
-        setInsuranceMeta(DEFAULT_INSURANCE_META);
-        setInsuranceNote(DEFAULT_INSURANCE_NOTE);
-        setTourUrl('');
-      } else if (kind === 'chalet') {
-        setSpaces(DEFAULT_CHALET_SPACES);
-        setAmenities(DEFAULT_CHALET_AMENITIES);
-        setDepositNote(DEFAULT_CHALET_DEPOSIT);
-        setTermsText(listToLines(DEFAULT_CHALET_TERMS));
-        setPolicyText('');
-        setMaxGuests(8);
-        setInventory(1);
-        setBathrooms(4);
-        setBedrooms(2);
-        setMajlis(1);
-        setMaxPlayers(undefined);
-        setFieldLength('');
-        setFieldWidth('');
-        setInsuranceAmount('');
-        setInsuranceMeta(DEFAULT_INSURANCE_META);
-        setInsuranceNote(DEFAULT_INSURANCE_NOTE);
-        setTourUrl('');
-      } else if (kind === 'tairaman') {
-        setSpaces(DEFAULT_CHALET_SPACES);
-        setAmenities(DEFAULT_CHALET_AMENITIES);
-        setDepositNote(DEFAULT_TAIRAMAN_DEPOSIT);
-        setTermsText(listToLines(DEFAULT_CHALET_TERMS));
-        setPolicyText('');
-        setMaxGuests(8);
-        setInventory(1);
-        setBathrooms(4);
-        setBedrooms(2);
-        setMajlis(1);
-        setMaxPlayers(undefined);
-        setFieldLength('');
-        setFieldWidth('');
-        setInsuranceAmount('');
-        setInsuranceMeta(DEFAULT_INSURANCE_META);
-        setInsuranceNote(DEFAULT_INSURANCE_NOTE);
-        setTourUrl('');
-      } else if (kind === 'hall') {
-        setSpaces(DEFAULT_HALL_SPACES);
-        setAmenities(DEFAULT_HALL_AMENITIES);
-        setDepositNote(DEFAULT_HALL_DEPOSIT);
-        setTermsText(listToLines(DEFAULT_HALL_TERMS));
-        setPolicyText('');
-        setMaxGuests(undefined);
-        setBathrooms(undefined);
-        setBedrooms(undefined);
-        setMajlis(undefined);
-        setMaxPlayers(undefined);
-        setFieldLength('');
-        setFieldWidth('');
-        setInsuranceAmount('');
-        setInsuranceMeta(DEFAULT_INSURANCE_META);
-        setInsuranceNote(DEFAULT_INSURANCE_NOTE);
-        setTourUrl('');
-      } else if (kind === 'sport') {
-        setSpaces(['إضاءة', 'كرات']);
-        setAmenities(['موقف سيارات', 'غرف تبديل']);
-        setDepositNote('');
-        setTermsText('');
-        setPolicyText('');
-        setMaxPlayers(12);
-        setFieldLength('40');
-        setFieldWidth('21');
-        setMaxGuests(undefined);
-        setBathrooms(undefined);
-        setBedrooms(undefined);
-        setMajlis(undefined);
+  const applyCategoryDefaults = useCallback((kind: FacilityKind) => {
+    const resetExtra = () => {
+      setMaxGuests(undefined);
+      setBathrooms(undefined);
+      setBedrooms(undefined);
+      setMajlis(undefined);
+      setMaxPlayers(undefined);
+      setFieldLength('');
+      setFieldWidth('');
+      setInsuranceAmount('');
+      setInsuranceMeta(DEFAULT_INSURANCE_META);
+      setInsuranceNote(DEFAULT_INSURANCE_NOTE);
+      setTourUrl('');
+      setPolicyText('');
+    };
+
+    if (kind === 'hotel') {
+      setSpaces(DEFAULT_HOTEL_SPACES);
+      setAmenities(DEFAULT_HOTEL_AMENITIES);
+      setDepositNote(DEFAULT_HOTEL_DEPOSIT);
+      setTermsText(listToLines(DEFAULT_HOTEL_TERMS));
+      setPolicyText(listToLines(DEFAULT_HOTEL_POLICY));
+      resetExtra();
+      return;
+    }
+    if (kind === 'chalet' || kind === 'tairaman') {
+      setSpaces(DEFAULT_CHALET_SPACES);
+      setAmenities(DEFAULT_CHALET_AMENITIES);
+      setDepositNote(
+        kind === 'tairaman' ? DEFAULT_TAIRAMAN_DEPOSIT : DEFAULT_CHALET_DEPOSIT,
+      );
+      setTermsText(listToLines(DEFAULT_CHALET_TERMS));
+      resetExtra();
+      setMaxGuests(8);
+      setInventory(1);
+      setBathrooms(4);
+      setBedrooms(2);
+      setMajlis(1);
+      return;
+    }
+    if (kind === 'hall') {
+      setSpaces(DEFAULT_HALL_SPACES);
+      setAmenities(DEFAULT_HALL_AMENITIES);
+      setDepositNote(DEFAULT_HALL_DEPOSIT);
+      setTermsText(listToLines(DEFAULT_HALL_TERMS));
+      resetExtra();
+      return;
+    }
+    if (kind === 'sport') {
+      setSpaces(['إضاءة', 'كرات']);
+      setAmenities(['موقف سيارات', 'غرف تبديل']);
+      setDepositNote('');
+      setTermsText('');
+      resetExtra();
+      setMaxPlayers(12);
+      setFieldLength('40');
+      setFieldWidth('21');
+      return;
+    }
+    if (kind === 'pool') {
+      const d = SERVICE_FACILITY_DEFAULTS.pool;
+      setSpaces(d.spaces);
+      setAmenities(d.amenities);
+      setDepositNote(d.depositNote);
+      setTermsText(listToLines(d.terms));
+      resetExtra();
+      setMaxPlayers(30);
+      return;
+    }
+    if (
+      kind === 'health' ||
+      kind === 'salon' ||
+      kind === 'car' ||
+      kind === 'artist' ||
+      kind === 'photo' ||
+      kind === 'supply'
+    ) {
+      const d = SERVICE_FACILITY_DEFAULTS[kind];
+      setSpaces(d.spaces);
+      setAmenities(d.amenities);
+      setDepositNote(d.depositNote);
+      setTermsText(listToLines(d.terms));
+      resetExtra();
+      if (kind === 'car') {
+        setInsuranceNote(DEFAULT_CAR_INSURANCE_NOTE);
       }
-    },
-    [],
-  );
+    }
+  }, []);
 
   useEffect(() => {
     if (isEdit || !parentCategory) return;
-    const kind = isHotel
-      ? 'hotel'
-      : isTairaman
-        ? 'tairaman'
-        : isChalet
-          ? 'chalet'
-          : isHall
-            ? 'hall'
-            : isSport
-              ? 'sport'
-              : 'other';
+    const kind = facilityKind;
     const key = `${kind}:${parentCategory.id}`;
     if (defaultsAppliedFor.current === key) return;
     defaultsAppliedFor.current = key;
     if (kind !== 'other') applyCategoryDefaults(kind);
-  }, [
-    applyCategoryDefaults,
-    isChalet,
-    isEdit,
-    isHall,
-    isHotel,
-    isSport,
-    isTairaman,
-    parentCategory,
-  ]);
+  }, [applyCategoryDefaults, facilityKind, isEdit, parentCategory]);
 
   useEffect(() => {
     let cancelled = false;
@@ -582,6 +559,10 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
       setError('أدخل الحد الأقصى للاعبين (على الأقل 2)');
       return;
     }
+    if (isPool && (maxPlayers == null || maxPlayers < 1)) {
+      setError('أدخل الحد الأقصى لمرتادي المسبح');
+      return;
+    }
     const parsedLength = parseOptionalAmount(fieldLength);
     const parsedWidth = parseOptionalAmount(fieldWidth);
     if (isSport && (parsedLength == null || parsedLength <= 0)) {
@@ -616,27 +597,22 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
       }
     };
 
+    const detailBase = (fallbackDeposit: string) => ({
+      ...existingAttributes,
+      spaces: cleanList(spaces),
+      amenities: cleanList(amenities),
+      depositNote: depositNote.trim() || fallbackDeposit,
+      terms: linesToList(termsText),
+      policyBullets: linesToList(policyText),
+    });
+
     let attributes: Record<string, unknown> | undefined;
     if (isHotel) {
-      attributes = {
-        ...existingAttributes,
-        spaces: cleanList(spaces),
-        amenities: cleanList(amenities),
-        depositNote: depositNote.trim() || DEFAULT_HOTEL_DEPOSIT,
-        terms: linesToList(termsText),
-        policyBullets: linesToList(policyText),
-      };
+      attributes = detailBase(DEFAULT_HOTEL_DEPOSIT);
     } else if (isChalet) {
-      attributes = {
-        ...existingAttributes,
-        spaces: cleanList(spaces),
-        amenities: cleanList(amenities),
-        depositNote:
-          depositNote.trim() ||
-          (isTairaman ? DEFAULT_TAIRAMAN_DEPOSIT : DEFAULT_CHALET_DEPOSIT),
-        terms: linesToList(termsText),
-        policyBullets: linesToList(policyText),
-      };
+      attributes = detailBase(
+        isTairaman ? DEFAULT_TAIRAMAN_DEPOSIT : DEFAULT_CHALET_DEPOSIT,
+      );
       // Capacity + unit count live on each package for طيرمانات.
       if (!isTairaman) {
         const guests = Math.max(1, Math.floor(Number(maxGuests)));
@@ -663,14 +639,7 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
       if (tourUrl.trim()) attributes.tourUrl = tourUrl.trim();
       else delete attributes.tourUrl;
     } else if (isHall) {
-      attributes = {
-        ...existingAttributes,
-        spaces: cleanList(spaces),
-        amenities: cleanList(amenities),
-        depositNote: depositNote.trim() || DEFAULT_HALL_DEPOSIT,
-        terms: linesToList(termsText),
-        policyBullets: linesToList(policyText),
-      };
+      attributes = detailBase(DEFAULT_HALL_DEPOSIT);
       applyOptionalInsurance(attributes);
     } else if (isSport) {
       const players = Math.max(2, Math.floor(Number(maxPlayers)));
@@ -690,6 +659,22 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
         fieldWidth: parsedWidth,
         width: parsedWidth,
       };
+    } else if (isPool) {
+      const swimmers = Math.max(1, Math.floor(Number(maxPlayers)));
+      attributes = {
+        ...detailBase(SERVICE_FACILITY_DEFAULTS.pool.depositNote),
+        maxPlayers: swimmers,
+        players: swimmers,
+        capacity: swimmers,
+        guests: swimmers,
+      };
+    } else if (isHealth || isSalon || isArtist || isPhoto) {
+      attributes = detailBase(
+        depositNote.trim() || serviceDefaults?.depositNote || 'سياسة العربون',
+      );
+    } else if (isCar) {
+      attributes = detailBase(SERVICE_FACILITY_DEFAULTS.car.depositNote);
+      applyOptionalInsurance(attributes);
     }
 
     const payload = {
@@ -697,7 +682,7 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
       description: description.trim() || undefined,
       addressDetails: addressDetails.trim() || undefined,
       cancellationPolicy:
-        isHotel || isChalet || isHall
+        isHotel || isChalet || isHall || isCar || isArtist || isHealth || isSalon || isPhoto || isPool
           ? depositNote.trim() || undefined
           : undefined,
       ...(isEdit
@@ -762,10 +747,16 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
     insuranceAmount,
     insuranceMeta,
     insuranceNote,
+    isArtist,
+    isCar,
     isChalet,
     isEdit,
     isHall,
+    isHealth,
     isHotel,
+    isPhoto,
+    isPool,
+    isSalon,
     isSport,
     isTairaman,
     stayNounPlural,
@@ -776,6 +767,7 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
     navigation,
     policyText,
     providerId,
+    serviceDefaults,
     setUser,
     spaces,
     termsText,
@@ -856,7 +848,23 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
         ? 'إضافة طيرمان'
         : isChalet
           ? 'إضافة شاليه'
-          : 'منشأة جديدة';
+          : isHall
+            ? 'إضافة قاعة'
+            : isSport
+              ? 'إضافة ملعب'
+              : isPool
+                ? 'إضافة مسبح'
+                : isHealth
+                  ? 'إضافة منشأة صحية'
+                  : isSalon
+                    ? 'إضافة صالون'
+                    : isCar
+                      ? 'إضافة تأجير سيارات'
+                      : isArtist
+                        ? 'إضافة فنان / زفّة'
+                        : isPhoto
+                          ? 'إضافة تصوير'
+                          : 'منشأة جديدة';
 
   return (
     <SafeAreaView
@@ -892,7 +900,19 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
                     ? 'مثال: طيرمان الورد (VIP)'
                     : isChalet
                       ? 'مثال: شالية رقم 1 (VIP)'
-                      : 'اسم المنشأة'
+                      : isHealth
+                        ? 'مثال: عيادة النور'
+                        : isSalon
+                          ? 'مثال: صالون الأناقة'
+                          : isPool
+                            ? 'مثال: مسبح الأهلي'
+                            : isCar
+                              ? 'مثال: تأجير سيارات الأمانة'
+                              : isArtist
+                                ? 'مثال: فرقة الفرح'
+                                : isPhoto
+                                  ? 'مثال: استوديو لمسة'
+                                  : 'اسم المنشأة'
               }
               placeholderTextColor={theme.colors.textSecondary}
               textAlign="right"
@@ -1006,7 +1026,19 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
                     ? 'عن الشاليهات (الوصف)'
                     : isSport
                       ? 'عن الملعب (الوصف)'
-                      : 'الوصف'}
+                      : isPool
+                        ? 'عن المسبح (الوصف)'
+                        : isHealth
+                          ? 'عن المنشأة الصحية (الوصف)'
+                          : isSalon
+                            ? 'عن الصالون (الوصف)'
+                            : isCar
+                              ? 'عن السيارات (الوصف)'
+                              : isArtist
+                                ? 'عن الفنان (الوصف)'
+                                : isPhoto
+                                  ? 'عن جلسة التصوير (الوصف)'
+                                  : 'الوصف'}
             </Text>
             <TextInput
               style={[styles.input, styles.textArea]}
@@ -1021,7 +1053,19 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
                       ? 'مثال: إقامة لليلة واحدة مع مسبح خاص'
                       : isSport
                         ? 'مثال: ملعب عشبي بإضاءة كاملة'
-                        : 'نبذة عن منشأتك'
+                        : isPool
+                          ? 'مثال: مسبح أولمبي مع غرف تبديل'
+                          : isHealth
+                            ? 'مثال: عيادة متخصصة مع مواعيد يومية'
+                            : isSalon
+                              ? 'مثال: قص وصبغ وعناية بالبشرة'
+                              : isCar
+                                ? 'مثال: سيارات حديثة مع تأمين شامل'
+                                : isArtist
+                                  ? 'مثال: زفّة تقليدية مع صوتيات'
+                                  : isPhoto
+                                    ? 'مثال: جلسات تصوير داخل الاستوديو وخارجه'
+                                    : 'نبذة عن منشأتك'
               }
               placeholderTextColor={theme.colors.textSecondary}
               textAlign="right"
@@ -1071,14 +1115,36 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
                 ? 'تفاصيل صفحة الفندق'
                 : isChalet
                   ? `تفاصيل صفحة ال${stayNoun}`
-                  : 'تفاصيل صفحة الملعب'}
+                  : isHall
+                    ? 'تفاصيل صفحة القاعة'
+                    : isSport
+                      ? 'تفاصيل صفحة الملعب'
+                      : isPool
+                        ? 'تفاصيل صفحة المسبح'
+                        : isHealth
+                          ? 'تفاصيل المنشأة الصحية'
+                          : isSalon
+                            ? 'تفاصيل الصالون'
+                            : isCar
+                              ? 'تفاصيل تأجير السيارات'
+                              : isArtist
+                                ? 'تفاصيل صفحة الفنان'
+                                : isPhoto
+                                  ? 'تفاصيل جلسة التصوير'
+                                  : 'تفاصيل الصفحة'}
             </Text>
             <Text style={styles.hint}>
               {isHotel
                 ? 'الغرف تُضاف لاحقاً كخدمات داخل المنشأة عبر «إضافة غرفة».'
-                : isChalet
+                : isChalet || isHall || isArtist
                   ? 'الباقات تُضاف لاحقاً كخدمات داخل المنشأة عبر «إضافة باقة».'
-                  : 'فترات الأسعار تُضاف لاحقاً كخدمة داخل المنشأة عبر «إضافة ملعب / باقة».'}
+                  : isSport || isPool
+                    ? 'فترات الأسعار تُضاف لاحقاً كخدمة داخل المنشأة.'
+                    : isHealth || isSalon || isPhoto
+                      ? 'الخدمات والمواعيد تُضاف لاحقاً داخل المنشأة مع مدة كل خدمة.'
+                      : isCar
+                        ? 'السيارات تُضاف لاحقاً كخدمات داخل المنشأة (مقاعد، موديل، ناقل…).'
+                        : 'أضف التفاصيل التي تظهر للعميل في صفحة المنشأة.'}
             </Text>
 
             {isSport ? (
@@ -1127,6 +1193,25 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
                 {fieldLength.trim() && fieldWidth.trim() ? (
                   <Text style={styles.meta}>
                     يظهر للعميل: {fieldLength.trim()} × {fieldWidth.trim()} متر مربع
+                  </Text>
+                ) : null}
+              </>
+            ) : null}
+
+            {isPool ? (
+              <>
+                <Text style={styles.subSection}>مواصفات المسبح</Text>
+                <View style={styles.steppers}>
+                  <QuantityStepper
+                    label="الحد الأقصى للمرتادين"
+                    value={maxPlayers}
+                    onChange={setMaxPlayers}
+                    min={1}
+                  />
+                </View>
+                {maxPlayers != null ? (
+                  <Text style={styles.meta}>
+                    يظهر للعميل: {maxPlayers} مرتاد كحد أقصى
                   </Text>
                 ) : null}
               </>
@@ -1194,15 +1279,33 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
             ) : null}
 
             <DynamicLineList
-              label={isSport ? 'مرافق الملعب' : 'المساحات المتوفرة'}
+              label={
+                isSport
+                  ? 'مرافق الملعب'
+                  : isPool
+                    ? 'مرافق المسبح'
+                    : 'المساحات المتوفرة'
+              }
               hint={
                 isSport
                   ? 'مثال: إضاءة، كرات، مدرج'
-                  : isChalet
-                    ? 'مثال: استيم، ساونا، سينما، مسبح كبار'
-                    : isHall
-                      ? 'مثال: موقف سيارات خارجي، مسرح، حديقة'
-                      : 'مثال: موقف سيارات، مسبح…'
+                  : isPool
+                    ? 'مثال: غرف تبديل، دشات، موقف'
+                    : isChalet
+                      ? 'مثال: استيم، ساونا، سينما، مسبح كبار'
+                      : isHall
+                        ? 'مثال: موقف سيارات خارجي، مسرح، حديقة'
+                        : isHealth
+                          ? 'مثال: غرفة انتظار، مواقف'
+                          : isSalon
+                            ? 'مثال: منطقة انتظار'
+                            : isCar
+                              ? 'مثال: مواقف التسليم'
+                              : isArtist
+                                ? 'مثال: منطقة تجهيز'
+                                : isPhoto
+                                  ? 'مثال: استوديو، خلفية تصوير'
+                                  : 'مثال: موقف سيارات، مسبح…'
               }
               items={spaces}
               onChange={setSpaces}
@@ -1211,15 +1314,29 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
             />
 
             <DynamicLineList
-              label={isSport ? 'خدمات إضافية' : 'وسائل الراحة'}
+              label={
+                isSport || isPool ? 'خدمات إضافية' : 'وسائل الراحة'
+              }
               hint={
                 isSport
                   ? 'مثال: غرف تبديل، موقف سيارات'
-                  : isChalet
-                    ? 'مثال: مطبخ، موقف خارجي، تدفئة، شاشات'
-                    : isHall
-                      ? 'مثال: صوتيات، تكييف، إضاءة (اختياري)'
-                      : 'مثال: واي فاي، تكييف…'
+                  : isPool
+                    ? 'مثال: منقذ، كراسي استراحة، واي فاي'
+                    : isChalet
+                      ? 'مثال: مطبخ، موقف خارجي، تدفئة، شاشات'
+                      : isHall
+                        ? 'مثال: صوتيات، تكييف، إضاءة (اختياري)'
+                        : isHealth
+                          ? 'مثال: تكييف، واي فاي، صيدلية قريبة'
+                          : isSalon
+                            ? 'مثال: تكييف، واي فاي، مواقف'
+                            : isCar
+                              ? 'مثال: تأمين أساسي، تكييف، GPS'
+                              : isArtist
+                                ? 'مثال: صوتيات، إضاءة'
+                                : isPhoto
+                                  ? 'مثال: إضاءة احترافية، تعديل صور'
+                                  : 'مثال: واي فاي، تكييف…'
               }
               items={amenities}
               onChange={setAmenities}
@@ -1241,7 +1358,9 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
                       ? DEFAULT_HALL_DEPOSIT
                       : isTairaman
                         ? DEFAULT_TAIRAMAN_DEPOSIT
-                        : DEFAULT_CHALET_DEPOSIT
+                        : isChalet
+                          ? DEFAULT_CHALET_DEPOSIT
+                          : serviceDefaults?.depositNote || 'سياسة العربون'
                 }
                 placeholderTextColor={theme.colors.textSecondary}
                 textAlign="right"

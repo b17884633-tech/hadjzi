@@ -3,11 +3,17 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { City } from './entities/city.entity';
 import { Provider } from '../providers/entities/provider.entity';
+import { Review } from '../reviews/entities/review.entity';
 import { CategoriesService } from '../categories/categories.service';
 import { AvailabilityStatus, ProviderStatus, RecordStatus } from '../../common/enums';
 import { TtlCache } from '../../common/utils/ttl-cache';
 
 const SEARCH_RESULT_LIMIT = 100;
+
+export type ProviderSearchResult = Provider & {
+  rating: number | null;
+  reviewCount: number;
+};
 
 @Injectable()
 export class SearchService {
@@ -18,6 +24,8 @@ export class SearchService {
     private readonly cities: Repository<City>,
     @InjectRepository(Provider)
     private readonly providers: Repository<Provider>,
+    @InjectRepository(Review)
+    private readonly reviews: Repository<Review>,
     private readonly categories: CategoriesService,
   ) {}
 
@@ -107,9 +115,68 @@ export class SearchService {
       );
     }
 
-    return qb
+    const rows = await qb
       .orderBy('provider.businessName', 'ASC')
       .take(SEARCH_RESULT_LIMIT)
       .getMany();
+
+    return this.attachRatingStats(rows);
+  }
+
+  /** Batch-load average rating + count so list cards stay cheap (one query). */
+  private async attachRatingStats(
+    providers: Provider[],
+  ): Promise<ProviderSearchResult[]> {
+    if (!providers.length) return [];
+
+    const ids = providers.map((p) => p.id);
+    const raw = await this.reviews
+      .createQueryBuilder('review')
+      .select('review.providerId', 'providerId')
+      .addSelect('AVG(review.rating)', 'average')
+      .addSelect('COUNT(*)::int', 'count')
+      .where('review.providerId IN (:...ids)', { ids })
+      .groupBy('review.providerId')
+      .getRawMany<Record<string, string | number>>();
+
+    const byId = new Map<string, { average: number | null; count: number }>();
+    for (const row of raw) {
+      const providerId = String(
+        row.providerId ?? row.providerid ?? row.provider_id ?? '',
+      );
+      if (!providerId) continue;
+      const count = Number(row.count) || 0;
+      const average =
+        count > 0
+          ? Math.round((Number(row.average) || 0) * 10) / 10
+          : null;
+      byId.set(providerId, { average, count });
+    }
+
+    // Plain objects so rating/reviewCount always serialize in the JSON response.
+    return providers.map((provider) => {
+      const stats = byId.get(provider.id);
+      return {
+        id: provider.id,
+        businessName: provider.businessName,
+        description: provider.description,
+        images: provider.images,
+        addressDetails: provider.addressDetails,
+        cancellationPolicy: provider.cancellationPolicy,
+        attributes: provider.attributes,
+        categoryId: provider.categoryId,
+        cityId: provider.cityId,
+        regionId: provider.regionId,
+        latitude: provider.latitude,
+        longitude: provider.longitude,
+        status: provider.status,
+        category: provider.category,
+        city: provider.city,
+        region: provider.region,
+        services: provider.services,
+        rating: stats?.average ?? null,
+        reviewCount: stats?.count ?? 0,
+      } as ProviderSearchResult;
+    });
   }
 }

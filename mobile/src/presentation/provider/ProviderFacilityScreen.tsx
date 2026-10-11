@@ -33,6 +33,13 @@ import {
   ReviewCard,
   StarsRow,
 } from './detail/RatingsSection';
+import {
+  isArtistCategory,
+  isHallCategory,
+  isHotelCategory,
+  isChaletCategory,
+  isCarCategory,
+} from './categoryKinds';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ProviderFacility'>;
 type Tab = 'services' | 'bookings' | 'reviews';
@@ -81,13 +88,17 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
       })),
     ]);
 
-    // Keep calendars bookable: hourly for sports price-periods, all-day otherwise.
+    // Keep calendars bookable: hourly for sports/pools/appointments, all-day otherwise.
     const today = new Date().toISOString().slice(0, 10);
     let healed = false;
     for (const s of svc) {
       const attrs = (s.attributes ?? {}) as Record<string, unknown>;
       const hasPricePeriods =
         Array.isArray(attrs.pricePeriods) && attrs.pricePeriods.length > 0;
+      const isAppointmentSlot =
+        typeof attrs.slotMinutes === 'number' ||
+        typeof attrs.durationMinutes === 'number' ||
+        (typeof s.durationMinutes === 'number' && s.durationMinutes > 0);
       const futureTimed = (s.availabilities ?? []).filter(
         (a) =>
           a.date >= today &&
@@ -101,10 +112,12 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
           (a.availableCapacity ?? 0) > 0,
       ).length;
 
-      if (hasPricePeriods) {
+      if (hasPricePeriods || isAppointmentSlot) {
         if (futureTimed < 20) {
           await container.serviceApi.seedHourlyAvailabilities(s.id, {
             days: 14,
+            startHour: isAppointmentSlot && !hasPricePeriods ? 9 : undefined,
+            endHour: isAppointmentSlot && !hasPricePeriods ? 21 : undefined,
             totalCapacity: 1,
           });
           healed = true;
@@ -353,13 +366,15 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
             onPress={() => setTab('services')}
           >
             <Text style={[styles.tabText, tab === 'services' && styles.tabTextOn]}>
-              {/فنادق|فندق|hotel/i.test(provider.category?.name ?? '')
+              {isHotelCategory(provider.category?.name)
                 ? 'الغرف'
-                : /شالي|طيرمان|طرمان|chalet|tairaman/i.test(
-                      provider.category?.name ?? '',
-                    )
+                : isChaletCategory(provider.category?.name) ||
+                    isHallCategory(provider.category?.name) ||
+                    isArtistCategory(provider.category?.name)
                   ? 'الباقات'
-                  : 'الخدمات'}
+                  : isCarCategory(provider.category?.name)
+                    ? 'السيارات'
+                    : 'الخدمات'}
               </Text>
             </Pressable>
           <Pressable
@@ -391,25 +406,29 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
             >
               <Ionicons name="add-circle" size={22} color={theme.colors.accentDark} />
               <Text style={styles.addRowText}>
-                {/فنادق|فندق|hotel/i.test(provider.category?.name ?? '')
+                {isHotelCategory(provider.category?.name)
                   ? 'إضافة غرفة'
-                  : /شالي|طيرمان|طرمان|صالة|قاعة|صالات|قاعات|chalet|tairaman|hall|زفاف/i.test(
-                        provider.category?.name ?? '',
-                      )
+                  : isChaletCategory(provider.category?.name) ||
+                      isHallCategory(provider.category?.name) ||
+                      isArtistCategory(provider.category?.name)
                     ? 'إضافة باقة'
-                    : 'إضافة خدمة'}
+                    : isCarCategory(provider.category?.name)
+                      ? 'إضافة سيارة'
+                      : 'إضافة خدمة'}
               </Text>
             </Pressable>
 
             {services.length === 0 ? (
               <Text style={styles.empty}>
-                {/فنادق|فندق|hotel/i.test(provider.category?.name ?? '')
+                {isHotelCategory(provider.category?.name)
                   ? 'لا توجد غرف — أضف غرفاً تظهر في صفحة التفاصيل.'
-                  : /شالي|طيرمان|طرمان|صالة|قاعة|صالات|قاعات|chalet|tairaman|hall|زفاف/i.test(
-                        provider.category?.name ?? '',
-                      )
+                  : isChaletCategory(provider.category?.name) ||
+                      isHallCategory(provider.category?.name) ||
+                      isArtistCategory(provider.category?.name)
                     ? 'لا توجد باقات — أضف باقات تظهر في صفحة التفاصيل.'
-                    : 'لا توجد خدمات — أضف خدمات تظهر في صفحة التفاصيل.'}
+                    : isCarCategory(provider.category?.name)
+                      ? 'لا توجد سيارات — أضف سيارات تظهر في صفحة التفاصيل.'
+                      : 'لا توجد خدمات — أضف خدمات تظهر في صفحة التفاصيل.'}
               </Text>
             ) : (
               services.map((svc) => (

@@ -1,13 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Image,
-  Linking,
-  Pressable,
-  StyleSheet,
-  View,
-} from 'react-native';
+import { Linking, Pressable, StyleSheet, View } from 'react-native';
 import { AppText as Text } from '@/core/ui/components/AppText';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
@@ -17,10 +9,10 @@ import { theme } from '../../core/ui/theme';
 import { useApp } from '../../di/AppProvider';
 import { Provider } from '../../domain/model/Provider';
 import { Destination } from '../../domain/model/Search';
-import { cheapestService } from '../../data/mappers/homeMappers';
 import { getSelectedCity, saveSelectedCity } from '../../data/local/cityStorage';
 import { CityPickerSheet } from '../home/components/CityPickerSheet';
 import { RootStackParamList } from '../navigation/types';
+import { SearchMapView } from './SearchMapView';
 
 const WHATSAPP_URL = 'https://wa.me/967700000000';
 const FALLBACK_CITIES: Destination[] = [
@@ -32,12 +24,6 @@ const FALLBACK_CITIES: Destination[] = [
   { id: 6, name: 'المكلا' },
 ];
 
-/**
- * List-based explore tab.
- * Native MapView is intentionally not imported — Android builds without a
- * Google Maps API key crash as soon as react-native-maps mounts.
- * Re-add a map panel later behind isNativeMapsEnabled() + a Maps key.
- */
 export function SearchScreen() {
   const { container, formatPrice } = useApp();
   const navigation =
@@ -95,96 +81,44 @@ export function SearchScreen() {
   const openProvider = (id: string) =>
     navigation.navigate('ProviderProfile', { providerId: id });
 
-  const renderProviderRow = ({ item }: { item: Provider }) => {
-    const service = cheapestService(item);
-    const price = service?.priceFrom ?? service?.basePrice;
-    return (
-      <Pressable style={styles.resultCard} onPress={() => openProvider(item.id)}>
-        <View style={styles.cardBody}>
-          <Text style={styles.cardTitle} numberOfLines={1}>
-            {item.businessName}
-          </Text>
-          <Text style={styles.cardMeta} numberOfLines={1}>
-            {[item.cityName ?? item.city?.name, item.addressDetails]
-              .filter(Boolean)
-              .join(' · ')}
-          </Text>
-          <View style={styles.cardFooter}>
-            {item.categoryName || item.category?.name ? (
-              <Text style={styles.cardCat}>
-                {item.categoryName ?? item.category?.name}
-              </Text>
-            ) : (
-              <View />
-            )}
-            {price != null ? (
-              <Text style={styles.cardPrice}>من {formatPrice(price)}</Text>
-            ) : null}
-          </View>
-        </View>
-        {item.images?.[0] || item.logoUrl ? (
-          <Image
-            source={{ uri: item.images?.[0] ?? item.logoUrl }}
-            style={styles.cardImage}
-          />
-        ) : (
-          <View style={[styles.cardImage, styles.cardImageFallback]}>
-            <Ionicons name="business" size={22} color={theme.colors.primary} />
-          </View>
-        )}
+  const header = (
+    <View style={styles.header}>
+      <Pressable style={styles.cityChip} onPress={() => setCityOpen(true)}>
+        <Ionicons name="location" size={16} color={theme.colors.primary} />
+        <Text style={styles.cityChipText} numberOfLines={1}>
+          المدينة: {city.name}
+        </Text>
+        <Ionicons name="chevron-down" size={14} color={theme.colors.textSecondary} />
       </Pressable>
-    );
-  };
+      <Pressable
+        style={styles.whatsappBtn}
+        onPress={() => Linking.openURL(WHATSAPP_URL)}
+        accessibilityRole="button"
+        accessibilityLabel="واتساب"
+      >
+        <Ionicons name="logo-whatsapp" size={20} color="#25D366" />
+      </Pressable>
+    </View>
+  );
 
   return (
     <View style={styles.root}>
-      <SafeAreaView style={styles.listSafe} edges={['top', 'left', 'right']}>
-        <View style={styles.header}>
-          <Pressable style={styles.cityChip} onPress={() => setCityOpen(true)}>
-            <Ionicons name="location" size={16} color={theme.colors.primary} />
-            <Text style={styles.cityChipText} numberOfLines={1}>
-              المدينة: {city.name}
-            </Text>
-            <Ionicons
-              name="chevron-down"
-              size={14}
-              color={theme.colors.textSecondary}
-            />
-          </Pressable>
-          <Pressable
-            style={styles.whatsappBtn}
-            onPress={() => Linking.openURL(WHATSAPP_URL)}
-            accessibilityRole="button"
-            accessibilityLabel="واتساب"
-          >
-            <Ionicons name="logo-whatsapp" size={20} color="#25D366" />
-          </Pressable>
-        </View>
-
-        {loading ? (
-          <View style={styles.listLoading}>
-            <ActivityIndicator color={theme.colors.primary} />
-          </View>
-        ) : (
-          <FlatList
-            data={providers}
-            keyExtractor={(p) => p.id}
-            contentContainerStyle={styles.listContent}
-            ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
-            ListEmptyComponent={
-              <Text style={styles.emptyList}>لا توجد منشآت في هذه المدينة</Text>
-            }
-            renderItem={renderProviderRow}
-          />
-        )}
+      <SafeAreaView style={styles.mapSafe} edges={['top', 'left', 'right']}>
+        <SearchMapView
+          cityName={city.name}
+          providers={providers}
+          loading={loading}
+          formatPrice={formatPrice}
+          onOpenProvider={openProvider}
+          header={header}
+        />
       </SafeAreaView>
-
       <CityPickerSheet
         visible={cityOpen}
         cities={cities}
         selectedCityId={city.id}
         title="اختر المدينة"
-        subtitle="عرض المنشآت حسب المدينة"
+        subtitle="عرض المنشآت على الخريطة حسب المدينة"
         onClose={() => setCityOpen(false)}
         onSelect={onSelectCity}
       />
@@ -193,28 +127,8 @@ export function SearchScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: '#F0F4F8',
-  },
-  listSafe: {
-    flex: 1,
-  },
-  listContent: {
-    paddingHorizontal: 14,
-    paddingBottom: 120,
-  },
-  listLoading: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyList: {
-    textAlign: 'center',
-    marginTop: 40,
-    fontSize: 14,
-    color: theme.colors.textSecondary,
-  },
+  root: { flex: 1, backgroundColor: '#F0F4F8' },
+  mapSafe: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -261,65 +175,5 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
     elevation: 3,
-  },
-  resultCard: {
-    flexDirection: 'row',
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 12,
-    gap: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#E6ECF3',
-    shadowColor: '#0D1B3E',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-  },
-  cardBody: {
-    flex: 1,
-    alignItems: 'flex-start',
-    justifyContent: 'center',
-    gap: 4,
-  },
-  cardTitle: {
-    width: '100%',
-    fontSize: 15,
-    fontWeight: '800',
-    color: theme.colors.primary,
-    textAlign: 'right',
-  },
-  cardMeta: {
-    width: '100%',
-    fontSize: 12,
-    color: theme.colors.textSecondary,
-    textAlign: 'right',
-  },
-  cardFooter: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 4,
-  },
-  cardCat: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: theme.colors.textSecondary,
-  },
-  cardPrice: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: theme.colors.accentDark,
-  },
-  cardImage: {
-    width: 72,
-    height: 72,
-    borderRadius: 14,
-    backgroundColor: theme.colors.mint,
-  },
-  cardImageFallback: {
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 });

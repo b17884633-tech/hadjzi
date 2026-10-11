@@ -3,6 +3,7 @@ import {
   AuthRepository,
   LoginResponse,
   PhoneLoginResponse,
+  RequiresRegisterResult,
 } from '../../domain/repository/AuthRepository';
 import { AuthTokens, User } from '../../domain/model/User';
 import { clearAccessToken, getAccessToken, saveAccessToken } from '../local/tokenStorage';
@@ -71,6 +72,31 @@ export class AuthRepositoryImpl implements AuthRepository {
     const { data } = await this.api.verifyOtp({ phone, code });
     await this.persistSession(data.data);
     return data.data;
+  }
+
+  async loginWithFirebase(input: {
+    idToken: string;
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+  }): Promise<AuthTokens | RequiresRegisterResult> {
+    const { data } = await this.api.firebaseLogin(input);
+    const payload = data.data as AuthTokens & {
+      requiresRegister?: boolean;
+      phone?: string;
+    };
+    if (payload?.requiresRegister) {
+      return {
+        kind: 'requires_register',
+        phone: payload.phone ?? '',
+      };
+    }
+    const tokens = {
+      accessToken: payload.accessToken,
+      user: payload.user,
+    };
+    await this.persistSession(tokens);
+    return tokens;
   }
 
   async logout(): Promise<void> {

@@ -76,9 +76,11 @@ export function BookingDateScreen() {
 
   const depositPct = DEPOSIT_PERCENTAGE;
   const packagePeriod = params.packagePeriod;
-  const isHallCategory = /صالة|قاعة|صالات|قاعات|hall|زفاف/i.test(
-    params.categoryName ?? '',
-  );
+  const isHallCategory =
+    /صالة|قاعة|صالات|قاعات|hall/i.test(params.categoryName ?? '') ||
+    /زفافين|زفاف|فنان|مغن|زفة|فرق|مبرع|رقاص|singer|artist/i.test(
+      params.categoryName ?? '',
+    );
   const isTairamanCategory = /طيرمان|طرمان|tairaman/i.test(
     params.categoryName ?? '',
   );

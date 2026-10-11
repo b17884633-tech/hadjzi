@@ -99,12 +99,15 @@ export function FeaturedOfferCard({
           ) : (
             <View style={styles.flex1} />
           )}
-          {offer.rating != null ? (
-            <View style={styles.ratingPill}>
-              <Ionicons name="star" size={10} color={theme.colors.accent} />
-              <Text style={styles.ratingValue}>{formatNumber(offer.rating, 1)}</Text>
-            </View>
-          ) : null}
+          <View style={styles.ratingPill}>
+            <Ionicons name="star" size={10} color={theme.colors.accent} />
+            <Text style={styles.ratingValue}>
+              {offer.rating != null &&
+              (offer.reviewCount == null || offer.reviewCount > 0)
+                ? formatNumber(offer.rating, 1)
+                : 'جديد'}
+            </Text>
+          </View>
         </View>
       </View>
     </Pressable>

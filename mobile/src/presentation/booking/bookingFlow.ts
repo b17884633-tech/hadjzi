@@ -216,19 +216,18 @@ export function resolveBookingFlow(
     };
   }
 
-  if (/زفاف|فنان/i.test(cat)) {
+  if (/زفافين|زفاف|فنان|مغن|زفة|فرق|مبرع|رقاص|singer|artist/i.test(cat)) {
     return {
       kind: 'DAY_PERIOD',
       bookingType: 'EVENT_DAY',
       title: 'حجز الفنان',
       question: 'في أي يوم تريد الحفل؟',
-      hint: 'حدد تاريخ المناسبة وفترة التواجد. التاريخ يُقفل حصرياً بعد دفع العربون.',
+      hint: 'اختر يوماً متاحاً — وقت التواجد يحدده مزود الخدمة في تفاصيل الباقة.',
       needsGuestStep: true,
       needsRooms: false,
       needsDuration: false,
       needsDeliveryTime: false,
       needsRoute: false,
-      periodOptions: ['فترة صباحية', 'فترة مسائية', 'يوم كامل'],
     };
   }
 

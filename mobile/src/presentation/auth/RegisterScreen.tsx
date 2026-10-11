@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -13,6 +13,12 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '../../core/ui/theme';
 import { useApp } from '../../di/AppProvider';
+import {
+  confirmFirebasePhoneOtp,
+  mapFirebaseAuthError,
+  sendFirebasePhoneOtp,
+  type FirebaseConfirmation,
+} from '../../data/remote/firebasePhoneAuth';
 import { Destination } from '../../domain/model/Search';
 import { AuthStackParamList } from '../navigation/types';
 import { CityPickerSheet } from '../home/components/CityPickerSheet';
@@ -46,6 +52,7 @@ export function RegisterScreen({ route, navigation }: Props) {
   const [otpLoading, setOtpLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [otpError, setOtpError] = useState<string | null>(null);
+  const firebaseConfirmRef = useRef<FirebaseConfirmation | null>(null);
 
   useEffect(() => {
     container.searchRepository
@@ -73,9 +80,18 @@ export function RegisterScreen({ route, navigation }: Props) {
         phone,
         channel,
       });
+      if (channel === 'SMS') {
+        firebaseConfirmRef.current = await sendFirebasePhoneOtp(phone);
+      }
       setOtpOpen(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'تعذر إنشاء الحساب');
+      setError(
+        channel === 'SMS'
+          ? mapFirebaseAuthError(e)
+          : e instanceof Error
+            ? e.message
+            : 'تعذر إنشاء الحساب',
+      );
     } finally {
       setLoading(false);
     }
@@ -85,12 +101,35 @@ export function RegisterScreen({ route, navigation }: Props) {
     setOtpLoading(true);
     setOtpError(null);
     try {
-      const tokens = await container.authRepository.verifyOtp(phone, code);
-      setUser(tokens.user);
+      if (channel === 'SMS') {
+        const confirmation = firebaseConfirmRef.current;
+        if (!confirmation) {
+          throw new Error('أعد إرسال رمز التحقق');
+        }
+        const idToken = await confirmFirebasePhoneOtp(confirmation, code);
+        const tokens = await container.authRepository.loginWithFirebase({
+          idToken,
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+        });
+        if ('kind' in tokens && tokens.kind === 'requires_register') {
+          throw new Error('تعذر إكمال التسجيل');
+        }
+        setUser(tokens.user);
+      } else {
+        const tokens = await container.authRepository.verifyOtp(phone, code);
+        setUser(tokens.user);
+      }
       setOtpOpen(false);
       navigation.getParent()?.goBack();
     } catch (e) {
-      setOtpError(e instanceof Error ? e.message : 'رمز التحقق غير صحيح');
+      setOtpError(
+        channel === 'SMS'
+          ? mapFirebaseAuthError(e)
+          : e instanceof Error
+            ? e.message
+            : 'رمز التحقق غير صحيح',
+      );
     } finally {
       setOtpLoading(false);
     }
@@ -98,9 +137,19 @@ export function RegisterScreen({ route, navigation }: Props) {
 
   const resend = async () => {
     try {
-      await container.authRepository.requestPhoneLogin(phone, channel);
+      if (channel === 'SMS') {
+        firebaseConfirmRef.current = await sendFirebasePhoneOtp(phone);
+      } else {
+        await container.authRepository.requestPhoneLogin(phone, channel);
+      }
     } catch (e) {
-      setOtpError(e instanceof Error ? e.message : 'تعذر إعادة الإرسال');
+      setOtpError(
+        channel === 'SMS'
+          ? mapFirebaseAuthError(e)
+          : e instanceof Error
+            ? e.message
+            : 'تعذر إعادة الإرسال',
+      );
     }
   };
 
