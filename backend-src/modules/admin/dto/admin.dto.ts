@@ -89,10 +89,25 @@ export class AdminSetPaymentStatusDto {
 }
 
 export class AdminUpdateSettingsDto {
+  @IsOptional()
   @IsNumber()
   @Min(0)
   @Max(100)
-  depositPercentage: number;
+  depositPercentage?: number;
+
+  /** Display name shown to customers for bank / wallet transfers. */
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(120)
+  paymentAccountName?: string;
+
+  /** Account / wallet number shown to customers for transfers. */
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(64)
+  paymentAccountNumber?: string;
 }
 
 export class AdminCreateNotificationDto {

@@ -12,6 +12,7 @@ import { UploadApi } from '../data/remote/uploadApi';
 import { ReviewApi } from '../data/remote/reviewApi';
 import { NotificationApi } from '../data/remote/notificationApi';
 import { DisputeApi } from '../data/remote/disputeApi';
+import { UserApi } from '../data/remote/userApi';
 import { AuthRepositoryImpl } from '../data/repository/AuthRepositoryImpl';
 import { BookingRepositoryImpl } from '../data/repository/BookingRepositoryImpl';
 import { PaymentRepositoryImpl } from '../data/repository/PaymentRepositoryImpl';
@@ -34,6 +35,7 @@ const uploadApi = new UploadApi(apiClient);
 const reviewApi = new ReviewApi(apiClient);
 const notificationApi = new NotificationApi(apiClient);
 const disputeApi = new DisputeApi(apiClient);
+const userApi = new UserApi(apiClient);
 
 const authRepository = new AuthRepositoryImpl(authApi);
 const bookingRepository = new BookingRepositoryImpl(bookingApi);
@@ -54,6 +56,7 @@ export const container = {
   reviewApi,
   notificationApi,
   disputeApi,
+  userApi,
   authRepository,
   bookingRepository,
   searchRepository,

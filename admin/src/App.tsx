@@ -19,7 +19,7 @@ const copy: Record<PageId, { title: string; subtitle: string }> = {
   facilities: { title: 'Facilities', subtitle: 'Review, update, and block venues' },
   users: { title: 'Users', subtitle: 'View, update, and block accounts' },
   complaints: { title: 'Complaints', subtitle: 'Answer messages and notify users' },
-  settings: { title: 'Settings', subtitle: 'Categories and the deposit rate' },
+  settings: { title: 'Settings', subtitle: 'Categories, deposit, and payment account' },
   wallet: { title: 'Wallet', subtitle: 'Deposits, balances, and refunds' },
 };
 

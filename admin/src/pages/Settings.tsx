@@ -33,11 +33,14 @@ function childIds(categories: Category[], id: number): number[] {
 }
 
 export function Settings() {
-  const { state, addCategory, updateCategory, setDeposit } = useAdmin();
+  const { state, addCategory, updateCategory, setDeposit, setPaymentAccount } = useAdmin();
   const toast = useToast();
   const confirm = useConfirm();
   const [deposit, setDepositDraft] = useState(String(state.depositPercentage));
   const [depositError, setDepositError] = useState('');
+  const [accountName, setAccountName] = useState(state.paymentAccountName);
+  const [accountNumber, setAccountNumber] = useState(state.paymentAccountNumber);
+  const [accountError, setAccountError] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [formError, setFormError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -45,6 +48,11 @@ export function Settings() {
   useEffect(() => {
     setDepositDraft(String(state.depositPercentage));
   }, [state.depositPercentage]);
+
+  useEffect(() => {
+    setAccountName(state.paymentAccountName);
+    setAccountNumber(state.paymentAccountNumber);
+  }, [state.paymentAccountName, state.paymentAccountNumber]);
 
   const ordered = useMemo(
     () => [...state.categories].sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, 'ar')),
@@ -155,6 +163,29 @@ export function Settings() {
     }
   }
 
+  async function savePaymentAccount() {
+    const name = accountName.trim();
+    const number = accountNumber.trim();
+    if (name.length < 2) {
+      setAccountError('Enter the account recipient name.');
+      return;
+    }
+    if (number.length < 2) {
+      setAccountError('Enter the account / wallet number.');
+      return;
+    }
+    setBusy(true);
+    try {
+      setAccountError('');
+      await setPaymentAccount(name, number);
+      toast('Payment account saved. Customers will see these details when paying.');
+    } catch (err) {
+      setAccountError(err instanceof ApiError ? err.message : 'Could not save payment account.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const blockedParents = new Set<number>();
   if (draft?.id != null) {
     blockedParents.add(draft.id);
@@ -171,44 +202,81 @@ export function Settings() {
       </section>
 
       <div className="settings-layout">
-        <section className="panel deposit-card">
-          <h2>Deposit percentage</h2>
-          <p className="help">
-            Saved to platform settings and applied to every service. Existing bookings keep the rate they were created with.
-          </p>
-          <div className="deposit-figure">
-            {Number.isFinite(Number(deposit)) ? Number(deposit) : 0}
-            <span>%</span>
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={1}
-            value={Number.isFinite(Number(deposit)) ? Number(deposit) : 0}
-            onChange={(event) => {
-              setDepositDraft(event.target.value);
-              setDepositError('');
-            }}
-            aria-label="Deposit percentage"
-          />
-          <label className="field">
-            <span>Exact value</span>
+        <div className="settings-side">
+          <section className="panel deposit-card">
+            <h2>Deposit percentage</h2>
+            <p className="help">
+              Saved to platform settings and applied to every service. Existing bookings keep the rate they were created with.
+            </p>
+            <div className="deposit-figure">
+              {Number.isFinite(Number(deposit)) ? Number(deposit) : 0}
+              <span>%</span>
+            </div>
             <input
-              inputMode="decimal"
-              value={deposit}
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={Number.isFinite(Number(deposit)) ? Number(deposit) : 0}
               onChange={(event) => {
                 setDepositDraft(event.target.value);
                 setDepositError('');
               }}
+              aria-label="Deposit percentage"
             />
-            {depositError ? <small>{depositError}</small> : null}
-          </label>
-          <p className="help">On a {formatMoney(100000)} booking the deposit is {formatMoney(Math.max(0, sample))}.</p>
-          <button type="button" className="btn primary" disabled={busy} onClick={() => void saveDeposit()}>
-            Save deposit
-          </button>
-        </section>
+            <label className="field">
+              <span>Exact value</span>
+              <input
+                inputMode="decimal"
+                value={deposit}
+                onChange={(event) => {
+                  setDepositDraft(event.target.value);
+                  setDepositError('');
+                }}
+              />
+              {depositError ? <small>{depositError}</small> : null}
+            </label>
+            <p className="help">On a {formatMoney(100000)} booking the deposit is {formatMoney(Math.max(0, sample))}.</p>
+            <button type="button" className="btn primary" disabled={busy} onClick={() => void saveDeposit()}>
+              Save deposit
+            </button>
+          </section>
+
+          <section className="panel deposit-card">
+            <h2>Payment account</h2>
+            <p className="help">
+              Shown to customers in the app when they pay by transfer (account name and number).
+            </p>
+            <label className="field">
+              <span>Account name</span>
+              <input
+                dir="auto"
+                value={accountName}
+                onChange={(event) => {
+                  setAccountName(event.target.value);
+                  setAccountError('');
+                }}
+                placeholder="e.g. تطبيق حجزي"
+              />
+            </label>
+            <label className="field">
+              <span>Account number</span>
+              <input
+                dir="ltr"
+                value={accountNumber}
+                onChange={(event) => {
+                  setAccountNumber(event.target.value);
+                  setAccountError('');
+                }}
+                placeholder="e.g. 968146"
+              />
+            </label>
+            {accountError ? <div className="error-banner">{accountError}</div> : null}
+            <button type="button" className="btn primary" disabled={busy} onClick={() => void savePaymentAccount()}>
+              Save payment account
+            </button>
+          </section>
+        </div>
 
         <section className="panel">
           <div className="panel-head">

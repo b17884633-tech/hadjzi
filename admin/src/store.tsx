@@ -33,6 +33,8 @@ type AdminState = {
   notices: Notice[];
   cities: City[];
   depositPercentage: number;
+  paymentAccountName: string;
+  paymentAccountNumber: string;
   overview: OverviewResponse | null;
 };
 
@@ -57,6 +59,7 @@ type AdminApi = {
   }) => Promise<void>;
   updateCategory: (id: number, patch: Partial<Category>) => Promise<void>;
   setDeposit: (value: number) => Promise<void>;
+  setPaymentAccount: (name: string, number: string) => Promise<void>;
   setPaymentStatus: (id: string, status: PaymentStatus) => Promise<void>;
   refundPayment: (id: string) => Promise<void>;
   pending: {
@@ -76,6 +79,8 @@ const empty: AdminState = {
   notices: [],
   cities: [],
   depositPercentage: 30,
+  paymentAccountName: 'تطبيق حجزي',
+  paymentAccountNumber: '968146',
   overview: null,
 };
 
@@ -125,6 +130,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         notices,
         cities,
         depositPercentage: settings.depositPercentage,
+        paymentAccountName: settings.paymentAccountName,
+        paymentAccountNumber: settings.paymentAccountNumber,
       });
     } catch (err) {
       const message = err instanceof ApiError ? err.message : 'Failed to load admin data';
@@ -213,6 +220,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setState((current) => ({
           ...current,
           depositPercentage: next.depositPercentage,
+          paymentAccountName: next.paymentAccountName,
+          paymentAccountNumber: next.paymentAccountNumber,
+        }));
+        await refresh();
+      },
+      setPaymentAccount: async (name, number) => {
+        const next = await api.setPaymentAccount(name, number);
+        setState((current) => ({
+          ...current,
+          depositPercentage: next.depositPercentage,
+          paymentAccountName: next.paymentAccountName,
+          paymentAccountNumber: next.paymentAccountNumber,
         }));
         await refresh();
       },

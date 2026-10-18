@@ -1,4 +1,4 @@
-import { Body, Controller, Headers, Post } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Post } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { InitiatePaymentDto } from './dto/initiate-payment.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -10,6 +10,13 @@ import { UserRole } from '../../common/enums';
 @Controller('payments')
 export class PaymentsController {
   constructor(private readonly payments: PaymentsService) {}
+
+  /** Public so the booking sheet can show admin-configured transfer details. */
+  @Public()
+  @Get('transfer-account')
+  transferAccount() {
+    return this.payments.getTransferAccount();
+  }
 
   @Roles(UserRole.CUSTOMER, UserRole.ADMIN)
   @Post('initiate')

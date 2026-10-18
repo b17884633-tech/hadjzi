@@ -111,6 +111,8 @@ export function DualRangeSlider({
   const fillWidth = Math.abs(highX - lowX);
 
   return (
+    // Keep a physical LTR layout box so `left` + locationX stay aligned under
+    // I18nManager.forceRTL. The `rtl` prop still maps min→right / max→left.
     <View style={styles.wrap} onLayout={onLayout} {...pan.panHandlers}>
       <View style={[styles.track, { backgroundColor: maximumTrackColor }]} />
       {width > 0 ? (
@@ -162,6 +164,7 @@ const styles = StyleSheet.create({
     height: 36,
     justifyContent: 'center',
     width: '100%',
+    direction: 'ltr',
   },
   track: {
     height: 4,

@@ -39,7 +39,12 @@ import {
 } from './dto/admin.dto';
 import { BookingService } from '../booking/booking.service';
 
-const DEPOSIT_KEY = 'default_deposit_percentage';
+import {
+  DEFAULT_PAYMENT_ACCOUNT,
+  PLATFORM_SETTING_KEYS,
+} from '../../common/constants/platform-settings';
+
+const DEPOSIT_KEY = PLATFORM_SETTING_KEYS.DEPOSIT;
 
 @Injectable()
 export class AdminService {
@@ -511,23 +516,43 @@ export class AdminService {
   }
 
   async getSettings() {
+    const paymentAccount = await this.getPaymentAccount();
     return {
       depositPercentage: await this.getDepositPercentage(),
+      paymentAccountName: paymentAccount.name,
+      paymentAccountNumber: paymentAccount.number,
     };
   }
 
   async updateSettings(dto: AdminUpdateSettingsDto) {
-    const value = roundMoney(dto.depositPercentage);
-    await this.settings.save({
-      key: DEPOSIT_KEY,
-      value,
-    });
-    await this.services
-      .createQueryBuilder()
-      .update(ServiceItem)
-      .set({ depositPercentage: value })
-      .execute();
-    return { depositPercentage: value };
+    if (dto.depositPercentage != null) {
+      const value = roundMoney(dto.depositPercentage);
+      await this.settings.save({
+        key: DEPOSIT_KEY,
+        value,
+      });
+      await this.services
+        .createQueryBuilder()
+        .update(ServiceItem)
+        .set({ depositPercentage: value })
+        .execute();
+    }
+
+    if (dto.paymentAccountName != null) {
+      await this.settings.save({
+        key: PLATFORM_SETTING_KEYS.PAYMENT_ACCOUNT_NAME,
+        value: dto.paymentAccountName.trim(),
+      });
+    }
+
+    if (dto.paymentAccountNumber != null) {
+      await this.settings.save({
+        key: PLATFORM_SETTING_KEYS.PAYMENT_ACCOUNT_NUMBER,
+        value: dto.paymentAccountNumber.trim(),
+      });
+    }
+
+    return this.getSettings();
   }
 
   async getDepositPercentage(): Promise<number> {
@@ -535,6 +560,26 @@ export class AdminService {
     const raw = row?.value;
     const num = typeof raw === 'number' ? raw : Number(raw);
     return Number.isFinite(num) ? num : DEFAULT_DEPOSIT_PERCENTAGE;
+  }
+
+  async getPaymentAccount(): Promise<{ name: string; number: string }> {
+    const [nameRow, numberRow] = await Promise.all([
+      this.settings.findOneBy({
+        key: PLATFORM_SETTING_KEYS.PAYMENT_ACCOUNT_NAME,
+      }),
+      this.settings.findOneBy({
+        key: PLATFORM_SETTING_KEYS.PAYMENT_ACCOUNT_NUMBER,
+      }),
+    ]);
+    const name =
+      typeof nameRow?.value === 'string' && nameRow.value.trim()
+        ? nameRow.value.trim()
+        : DEFAULT_PAYMENT_ACCOUNT.name;
+    const number =
+      typeof numberRow?.value === 'string' && numberRow.value.trim()
+        ? numberRow.value.trim()
+        : DEFAULT_PAYMENT_ACCOUNT.number;
+    return { name, number };
   }
 
   async listNotifications() {

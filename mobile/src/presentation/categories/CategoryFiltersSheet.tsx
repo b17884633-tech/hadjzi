@@ -723,6 +723,8 @@ const styles = StyleSheet.create({
   },
   sliderPad: {
     paddingTop: 2,
+    // Native slider + DualRangeSlider use physical LTR coords; avoid forceRTL mirroring.
+    direction: 'ltr',
   },
   slider: {
     width: '100%',

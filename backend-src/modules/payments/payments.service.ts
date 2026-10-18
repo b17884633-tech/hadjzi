@@ -18,6 +18,11 @@ import {
   PaymentStatus,
   PaymentType,
 } from '../../common/enums';
+import {
+  DEFAULT_PAYMENT_ACCOUNT,
+  PLATFORM_SETTING_KEYS,
+} from '../../common/constants/platform-settings';
+import { PlatformSetting } from '../admin/entities/platform-setting.entity';
 import { User } from '../users/entities/user.entity';
 
 @Injectable()
@@ -25,10 +30,33 @@ export class PaymentsService {
   constructor(
     @InjectRepository(Payment)
     private readonly payments: Repository<Payment>,
+    @InjectRepository(PlatformSetting)
+    private readonly settings: Repository<PlatformSetting>,
     private readonly bookings: BookingService,
     private readonly gateway: StubPaymentGateway,
     private readonly config: ConfigService,
   ) {}
+
+  /** Account details customers use for bank / wallet transfer. */
+  async getTransferAccount() {
+    const [nameRow, numberRow] = await Promise.all([
+      this.settings.findOneBy({
+        key: PLATFORM_SETTING_KEYS.PAYMENT_ACCOUNT_NAME,
+      }),
+      this.settings.findOneBy({
+        key: PLATFORM_SETTING_KEYS.PAYMENT_ACCOUNT_NUMBER,
+      }),
+    ]);
+    const name =
+      typeof nameRow?.value === 'string' && nameRow.value.trim()
+        ? nameRow.value.trim()
+        : DEFAULT_PAYMENT_ACCOUNT.name;
+    const number =
+      typeof numberRow?.value === 'string' && numberRow.value.trim()
+        ? numberRow.value.trim()
+        : DEFAULT_PAYMENT_ACCOUNT.number;
+    return { name, number };
+  }
 
   depositFor(totalAmount: number, depositPercentage: number) {
     const depositAmount = Math.round(((totalAmount * depositPercentage) / 100) * 100) / 100;

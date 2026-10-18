@@ -7,7 +7,7 @@
     "scheme": "hadjzi",
     "userInterfaceStyle": "light",
     "backgroundColor": "#FFFFFF",
-    "icon": "./assets/logo.png",
+    "icon": "./assets/hadjzi.jpeg",
     "splash": {
       "image": "./assets/logo.png",
       "resizeMode": "contain",
@@ -28,7 +28,8 @@
       "usesCleartextTraffic": true,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
-        "backgroundColor": "#0D1B3E"
+        "foregroundImage": "./assets/hadjzi.jpeg",
+        "backgroundColor": "#FFFFFF"
       }
     },
     "androidNavigationBar": {
@@ -46,6 +47,7 @@
       }
     },
     "plugins": [
+      "expo-dev-client",
       "expo-asset",
       "expo-secure-store",
       "expo-status-bar",

@@ -141,7 +141,7 @@ export function AccountScreen() {
       key: 'settings',
       label: 'الإعدادات',
       icon: 'settings-outline',
-      onPress: () => undefined,
+      onPress: () => navigation.navigate('EditProfile'),
     },
     {
       key: 'privacy',

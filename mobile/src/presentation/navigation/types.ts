@@ -41,6 +41,7 @@ export type RootStackParamList = {
   BookingVoucher: { bookingId: string; mode?: 'provider' };
   Notifications: undefined;
   Favorites: undefined;
+  EditProfile: undefined;
   ProviderHome: undefined;
   ProviderFacility: { providerId: string };
   ProviderFacilityForm: { providerId?: string };

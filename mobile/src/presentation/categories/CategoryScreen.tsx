@@ -250,31 +250,35 @@ export function CategoryScreen({ route, navigation }: Props) {
       </View>
 
       {chips.length > 0 ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chipRow}
-        >
-          {chips.map((chip) => (
-            <Pressable
-              key={chip.key}
-              style={styles.chip}
-              onPress={() => clearChip(chip.key)}
-            >
-              <Text style={styles.chipText}>{chip.label}</Text>
-              <Ionicons name="close" size={14} color={theme.colors.primary} />
-            </Pressable>
-          ))}
-          <Pressable
-            style={styles.chipClearAll}
-            onPress={() => setFilters(emptyCategoryFilters())}
+        <View style={styles.chipBar}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.chipScroll}
+            contentContainerStyle={styles.chipRow}
           >
-            <Text style={styles.chipClearAllText}>مسح الكل</Text>
-          </Pressable>
-        </ScrollView>
+            {chips.map((chip) => (
+              <Pressable
+                key={chip.key}
+                style={styles.chip}
+                onPress={() => clearChip(chip.key)}
+              >
+                <Text style={styles.chipText}>{chip.label}</Text>
+                <Ionicons name="close" size={14} color={theme.colors.primary} />
+              </Pressable>
+            ))}
+            <Pressable
+              style={styles.chipClearAll}
+              onPress={() => setFilters(emptyCategoryFilters())}
+            >
+              <Text style={styles.chipClearAllText}>مسح الكل</Text>
+            </Pressable>
+          </ScrollView>
+        </View>
       ) : null}
 
       <ScrollView
+        style={styles.mainScroll}
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -485,11 +489,21 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#fff',
   },
+  chipBar: {
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+  // ScrollView defaults to flexGrow:1 — without this the chip row steals half the screen.
+  chipScroll: {
+    flexGrow: 0,
+  },
   chipRow: {
     paddingHorizontal: 14,
+    paddingTop: 2,
     paddingBottom: 8,
     gap: 8,
     alignItems: 'center',
+    flexGrow: 0,
   },
   chip: {
     flexDirection: 'row',
@@ -515,6 +529,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: theme.colors.accentDark,
+  },
+  mainScroll: {
+    flex: 1,
   },
   scroll: {
     paddingHorizontal: 14,

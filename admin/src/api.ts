@@ -195,13 +195,32 @@ export const api = {
   },
 
   settings() {
-    return request<{ depositPercentage: number }>('/admin/settings');
+    return request<{
+      depositPercentage: number;
+      paymentAccountName: string;
+      paymentAccountNumber: string;
+    }>('/admin/settings');
   },
 
   setDeposit(depositPercentage: number) {
-    return request<{ depositPercentage: number }>('/admin/settings', {
+    return request<{
+      depositPercentage: number;
+      paymentAccountName: string;
+      paymentAccountNumber: string;
+    }>('/admin/settings', {
       method: 'PATCH',
       body: JSON.stringify({ depositPercentage }),
+    });
+  },
+
+  setPaymentAccount(paymentAccountName: string, paymentAccountNumber: string) {
+    return request<{
+      depositPercentage: number;
+      paymentAccountName: string;
+      paymentAccountNumber: string;
+    }>('/admin/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({ paymentAccountName, paymentAccountNumber }),
     });
   },
 

@@ -36,18 +36,10 @@ export class AuthService {
       email: dto.email,
       password,
     });
-    const channel = dto.channel ?? OtpChannel.SMS;
-    // SMS OTP is sent by Firebase Phone Auth on the client.
-    if (channel === OtpChannel.SMS) {
-      return {
-        user: this.sanitize(user),
-        otp: { provider: 'firebase', channel },
-      };
-    }
     const otp = await this.otp.issue(
       user.phone,
       OtpPurpose.REGISTER,
-      channel,
+      dto.channel ?? OtpChannel.SMS,
     );
     return {
       user: this.sanitize(user),
@@ -66,18 +58,10 @@ export class AuthService {
       if (user.status === AccountStatus.SUSPENDED) {
         throw new UnauthorizedException('Account suspended');
       }
-      const channel = dto.channel ?? OtpChannel.SMS;
-      // SMS OTP is sent by Firebase Phone Auth on the client.
-      if (channel === OtpChannel.SMS) {
-        return {
-          requiresOtp: true,
-          otp: { provider: 'firebase', channel },
-        };
-      }
       const otp = await this.otp.issue(
         user.phone,
         OtpPurpose.LOGIN,
-        channel,
+        dto.channel ?? OtpChannel.SMS,
       );
       return { requiresOtp: true, otp };
     }

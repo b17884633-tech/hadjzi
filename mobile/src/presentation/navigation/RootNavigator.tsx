@@ -14,6 +14,7 @@ import { BookingCheckoutScreen } from '../booking/BookingCheckoutScreen';
 import { PaymentWebviewScreen } from '../booking/checkout/PaymentWebviewScreen';
 import { BookingVoucherScreen } from '../my_bookings/BookingVoucherScreen';
 import { FavoritesScreen } from '../account/FavoritesScreen';
+import { EditProfileScreen } from '../account/EditProfileScreen';
 import { NotificationsScreen } from '../account/NotificationsScreen';
 import { ProviderHomeScreen } from '../provider/ProviderHomeScreen';
 import { ProviderFacilityScreen } from '../provider/ProviderFacilityScreen';
@@ -110,6 +111,11 @@ export function RootNavigator() {
       <Stack.Screen
         name="Favorites"
         component={FavoritesScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="EditProfile"
+        component={EditProfileScreen}
         options={{ headerShown: false }}
       />
       <Stack.Screen

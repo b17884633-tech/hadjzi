@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -16,6 +16,11 @@ import { SmoothBottomSheet } from '../../../core/ui/components/SmoothBottomSheet
 import { theme } from '../../../core/ui/theme';
 import { useApp } from '../../../di/AppProvider';
 
+const FALLBACK_ACCOUNT = {
+  name: 'تطبيق حجزي',
+  number: '968146',
+};
+
 type Props = {
   visible: boolean;
   fullAmount: number;
@@ -31,11 +36,32 @@ export function PaymentTransferSheet({
   onClose,
   onConfirm,
 }: Props) {
-  const { formatPrice } = useApp();
+  const { formatPrice, container } = useApp();
   const insets = useSafeAreaInsets();
   const [payMode, setPayMode] = useState<'FULL' | 'DEPOSIT'>('DEPOSIT');
   const [refNo, setRefNo] = useState('');
   const [loading, setLoading] = useState(false);
+  const [accountName, setAccountName] = useState(FALLBACK_ACCOUNT.name);
+  const [accountNumber, setAccountNumber] = useState(FALLBACK_ACCOUNT.number);
+
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    void container.paymentApi
+      .transferAccount()
+      .then((res) => {
+        if (cancelled) return;
+        const data = res.data?.data;
+        if (data?.name?.trim()) setAccountName(data.name.trim());
+        if (data?.number?.trim()) setAccountNumber(data.number.trim());
+      })
+      .catch(() => {
+        /* keep fallback */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, container.paymentApi]);
 
   const copy = async (value: string) => {
     try {
@@ -91,14 +117,14 @@ export function PaymentTransferSheet({
             <View style={styles.accountCard}>
               <InfoRow
                 label="اسم مستلم"
-                value="تطبيق حجزي"
-                onCopy={() => copy('تطبيق حجزي')}
+                value={accountName}
+                onCopy={() => copy(accountName)}
               />
               <View style={styles.accountDivider} />
               <InfoRow
                 label="رقم الحساب"
-                value="968146"
-                onCopy={() => copy('968146')}
+                value={accountNumber}
+                onCopy={() => copy(accountNumber)}
               />
             </View>
 

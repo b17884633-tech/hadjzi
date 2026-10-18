@@ -13,10 +13,18 @@ import { UsersModule } from '../users/users.module';
 import { MessagingAdapter } from './messaging/messaging.adapter';
 import { ConsoleSmsAdapter } from './messaging/console-sms.adapter';
 import { ConsoleWhatsappAdapter } from './messaging/console-whatsapp.adapter';
+import { InfobipSmsAdapter } from './messaging/infobip-sms.adapter';
 import { TwilioSmsAdapter } from './messaging/twilio-sms.adapter';
 import { TwilioWhatsappAdapter } from './messaging/twilio-whatsapp.adapter';
 import { MetaWhatsappAdapter } from './messaging/meta-whatsapp.adapter';
 import { SMS_ADAPTER, WHATSAPP_ADAPTER } from './messaging/messaging.tokens';
+
+function hasInfobipSms(config: ConfigService): boolean {
+  return Boolean(
+    config.get('messaging.infobip.apiKey') &&
+      config.get('messaging.infobip.baseUrl'),
+  );
+}
 
 function hasTwilioSms(config: ConfigService): boolean {
   return Boolean(
@@ -66,17 +74,28 @@ function hasMetaWhatsapp(config: ConfigService): boolean {
     JwtStrategy,
     ConsoleSmsAdapter,
     ConsoleWhatsappAdapter,
+    InfobipSmsAdapter,
     TwilioSmsAdapter,
     TwilioWhatsappAdapter,
     MetaWhatsappAdapter,
     {
       provide: SMS_ADAPTER,
-      inject: [ConfigService, ConsoleSmsAdapter, TwilioSmsAdapter],
+      inject: [
+        ConfigService,
+        ConsoleSmsAdapter,
+        InfobipSmsAdapter,
+        TwilioSmsAdapter,
+      ],
       useFactory: (
         config: ConfigService,
         consoleSms: ConsoleSmsAdapter,
+        infobipSms: InfobipSmsAdapter,
         twilioSms: TwilioSmsAdapter,
-      ): MessagingAdapter => (hasTwilioSms(config) ? twilioSms : consoleSms),
+      ): MessagingAdapter => {
+        if (hasInfobipSms(config)) return infobipSms;
+        if (hasTwilioSms(config)) return twilioSms;
+        return consoleSms;
+      },
     },
     {
       provide: WHATSAPP_ADAPTER,

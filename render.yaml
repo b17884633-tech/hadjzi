@@ -33,7 +33,14 @@ services:
         sync: false
       - key: CLOUDINARY_FOLDER
         value: hadjzi
-      # Firebase Admin — required to verify Phone Auth ID tokens from the app
+      # Infobip SMS (OTP)
+      - key: INFOBIP_API_KEY
+        sync: false
+      - key: INFOBIP_BASE_URL
+        sync: false
+      - key: INFOBIP_SMS_FROM
+        value: ServiceSMS
+      # Firebase Admin (optional — only if using Firebase Phone Auth)
       - key: FIREBASE_PROJECT_ID
         sync: false
       - key: FIREBASE_CLIENT_EMAIL
