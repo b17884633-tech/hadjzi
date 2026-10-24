@@ -7,19 +7,27 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  IsUUID,
+  Matches,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_HHMM = /^\d{2}:\d{2}(:\d{2})?$/;
+
 export class CreateServiceDto {
-  @IsString()
+  @IsUUID('loose')
   providerId: string;
 
   @IsString()
+  @MaxLength(150)
   name: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(5000)
   description?: string;
 
   @IsOptional()
@@ -55,10 +63,12 @@ export class CreateServiceDto {
 export class UpdateServiceDto {
   @IsOptional()
   @IsString()
+  @MaxLength(150)
   name?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(5000)
   description?: string;
 
   @IsOptional()
@@ -94,19 +104,23 @@ export class UpdateServiceDto {
 
 export class CreateAvailabilityDto {
   @IsString()
+  @Matches(ISO_DATE)
   date: string;
 
   @IsOptional()
   @IsString()
+  @Matches(TIME_HHMM)
   startTime?: string;
 
   @IsOptional()
   @IsString()
+  @Matches(TIME_HHMM)
   endTime?: string;
 
   @IsOptional()
   @IsInt()
   @Min(1)
+  @Max(10_000)
   totalCapacity?: number;
 
   @IsOptional()
@@ -129,6 +143,7 @@ export class UpdateAvailabilityStatusDto {
 export class SeedHourlyAvailabilityDto {
   @IsOptional()
   @IsString()
+  @Matches(ISO_DATE)
   fromDate?: string;
 
   @IsOptional()
@@ -161,6 +176,7 @@ export class SeedHourlyAvailabilityDto {
   @IsOptional()
   @IsInt()
   @Min(1)
+  @Max(10_000)
   totalCapacity?: number;
 }
 
@@ -168,6 +184,7 @@ export class SeedHourlyAvailabilityDto {
 export class SeedAvailabilityDto {
   @IsOptional()
   @IsString()
+  @Matches(ISO_DATE)
   fromDate?: string;
 
   @IsOptional()
@@ -179,5 +196,6 @@ export class SeedAvailabilityDto {
   @IsOptional()
   @IsInt()
   @Min(1)
+  @Max(10_000)
   totalCapacity?: number;
 }

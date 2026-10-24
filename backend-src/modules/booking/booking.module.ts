@@ -6,6 +6,10 @@ import { BookingController } from './booking.controller';
 import { ServiceItem } from '../services/entities/service-item.entity';
 import { ServiceAvailability } from '../services/entities/service-availability.entity';
 import { Payment } from '../payments/entities/payment.entity';
+import { ProvidersModule } from '../providers/providers.module';
+import { PushModule } from '../push/push.module';
+import { AppNotification } from '../admin/entities/notification.entity';
+import { Provider } from '../providers/entities/provider.entity';
 
 @Module({
   imports: [
@@ -14,7 +18,11 @@ import { Payment } from '../payments/entities/payment.entity';
       ServiceItem,
       ServiceAvailability,
       Payment,
+      AppNotification,
+      Provider,
     ]),
+    ProvidersModule,
+    PushModule,
   ],
   controllers: [BookingController],
   providers: [BookingService],

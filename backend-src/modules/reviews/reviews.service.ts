@@ -42,16 +42,28 @@ export class ReviewsService {
     );
   }
 
+  /** Public page shows the most recent reviews; stats are computed over all of them in SQL. */
+  private static readonly PUBLIC_REVIEWS_LIMIT = 200;
+
   async forProvider(providerId: string) {
     return this.reviews.find({
       where: { providerId },
       relations: ['customer'],
       order: { createdAt: 'DESC' },
+      take: ReviewsService.PUBLIC_REVIEWS_LIMIT,
     });
   }
 
   async summary(providerId: string) {
-    const rows = await this.forProvider(providerId);
+    const [rows, stats] = await Promise.all([
+      this.forProvider(providerId),
+      this.reviews
+        .createQueryBuilder('review')
+        .select('COUNT(*)::int', 'count')
+        .addSelect('AVG(review.rating)', 'average')
+        .where('review.providerId = :providerId', { providerId })
+        .getRawOne<{ count: number; average: string | null }>(),
+    ]);
     const reviews = rows.map((r) => ({
       id: r.id,
       bookingId: r.bookingId,
@@ -61,14 +73,12 @@ export class ReviewsService {
       customerName: customerDisplayName(r.customer),
       customerId: r.customerId,
     }));
-    if (reviews.length === 0) {
+    const count = Number(stats?.count) || 0;
+    if (count === 0) {
       return { providerId, count: 0, average: 0, reviews: [] };
     }
-    const average =
-      Math.round(
-        (reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length) * 10,
-      ) / 10;
-    return { providerId, count: reviews.length, average, reviews };
+    const average = Math.round((Number(stats?.average) || 0) * 10) / 10;
+    return { providerId, count, average, reviews };
   }
 }
 

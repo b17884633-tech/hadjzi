@@ -9,6 +9,10 @@ import { TtlCache } from '../../common/utils/ttl-cache';
 @Injectable()
 export class CategoriesService {
   private readonly treeCache = new TtlCache<Category[]>(60_000);
+  /** id → parentId for every category; consulted on every /search request. */
+  private readonly parentMapCache = new TtlCache<
+    Array<Pick<Category, 'id' | 'parentId'>>
+  >(60_000);
 
   constructor(
     @InjectRepository(Category)
@@ -51,28 +55,35 @@ export class CategoriesService {
       sortOrder: dto.sortOrder ?? 0,
     });
     const saved = await this.categories.save(category);
-    this.treeCache.clear();
+    this.invalidate();
     return saved;
   }
 
   async update(id: number, dto: UpdateCategoryDto) {
     await this.findById(id);
     await this.categories.update(id, dto);
-    this.treeCache.clear();
+    this.invalidate();
     return this.findById(id);
   }
 
   async remove(id: number) {
     await this.findById(id);
     await this.categories.update(id, { status: RecordStatus.INACTIVE });
-    this.treeCache.clear();
+    this.invalidate();
     return { id, status: RecordStatus.INACTIVE };
   }
 
+  private invalidate() {
+    this.treeCache.clear();
+    this.parentMapCache.clear();
+  }
+
   async collectDescendantIds(categoryId: number): Promise<number[]> {
-    const all = await this.categories.find({
-      select: ['id', 'parentId'],
-    });
+    const all =
+      this.parentMapCache.get() ??
+      this.parentMapCache.set(
+        await this.categories.find({ select: ['id', 'parentId'] }),
+      );
     const ids = [categoryId];
     const walk = (parentId: number) => {
       for (const node of all.filter((c) => c.parentId === parentId)) {

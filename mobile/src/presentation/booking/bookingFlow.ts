@@ -25,10 +25,13 @@ export type BookingFlowKind =
   | 'STAY_RANGE' // chalets, hotels, cars
   | 'SLOT_TIME' // health, salon, photo
   | 'SLOT_DURATION' // pools, fields
+  | 'MEMBERSHIP' // gyms / sport clubs — days or months
   | 'QUANTITY_DELIVERY' // wedding supplies
   | 'TRANSPORT'; // transport trips
 
 export type PackagePeriod = 'MORNING' | 'EVENING' | 'PER_NIGHT';
+
+export type MembershipUnit = 'DAYS' | 'MONTHS';
 
 export type BookingDraftParams = {
   providerId: string;
@@ -52,7 +55,53 @@ export type BookingDraftParams = {
   packageToTime?: string;
   /** Sports / playground hourly price bands. */
   pricePeriods?: PricePeriod[];
+  /** Gym membership: DAYS or MONTHS. */
+  membershipUnit?: MembershipUnit;
+  /** Gym membership length (e.g. 30 days or 3 months). */
+  membershipDuration?: number;
+  /** Active facility offer — applied when bookingDate falls in [starts, ends]. */
+  offerDiscountPercent?: number;
+  offerStartsOn?: string;
+  offerEndsOn?: string;
 };
+
+/** True when stay date is inside the provider offer window. */
+export function bookingGetsOffer(
+  bookingDate: string | undefined | null,
+  offer?: {
+    offerDiscountPercent?: number;
+    offerStartsOn?: string;
+    offerEndsOn?: string;
+  } | null,
+): number {
+  const pct = Number(offer?.offerDiscountPercent);
+  const start = offer?.offerStartsOn?.slice(0, 10);
+  const end = offer?.offerEndsOn?.slice(0, 10);
+  const day = bookingDate?.slice(0, 10);
+  if (!day || !start || !end || !Number.isFinite(pct) || pct <= 0) return 0;
+  if (day < start || day > end) return 0;
+  return pct;
+}
+
+export function applyOfferToTotal(
+  total: number,
+  bookingDate: string | undefined | null,
+  offer?: {
+    offerDiscountPercent?: number;
+    offerStartsOn?: string;
+    offerEndsOn?: string;
+  } | null,
+): { total: number; discountPercent: number; original: number } {
+  const discountPercent = bookingGetsOffer(bookingDate, offer);
+  if (!discountPercent) {
+    return { total, discountPercent: 0, original: total };
+  }
+  return {
+    original: total,
+    discountPercent,
+    total: Math.round(total * (1 - discountPercent / 100)),
+  };
+}
 
 export type BookingCheckoutParams = BookingDraftParams & {
   availabilityId: string;
@@ -123,19 +172,25 @@ export function resolveBookingFlow(
     };
   }
 
-  if (/نقل/i.test(cat)) {
+  // النقليات / السيارات / الملبوسات: e-commerce day rent (range).
+  if (/نقل|نقليات|سيارة|سيارات|ملبوس|ملابس|أزياء|apparel|clothing/i.test(cat)) {
+    const isApparel = /ملبوس|ملابس|أزياء|apparel|clothing/i.test(cat);
+    const isTransport = /نقل|نقليات/i.test(cat);
     return {
-      kind: 'TRANSPORT',
-      bookingType: 'SLOT',
-      title: 'حجز النقل',
-      question: 'حدد موعد الرحلة وعدد المقاعد',
-      hint: 'اختر التاريخ والوقت، ثم أدخل نقاط الانطلاق والوصول وعدد المقاعد.',
+      kind: 'STAY_RANGE',
+      bookingType: 'UNIT_DAY',
+      title: isApparel
+        ? 'تأجير الملبوسات'
+        : isTransport
+          ? 'تأجير النقليات'
+          : 'تأجير السيارات',
+      question: 'حدد تاريخ الاستلام والإرجاع',
+      hint: 'اختر يوم الاستلام ثم يوم الإرجاع. السعر = سعر اليوم × عدد الأيام.',
       needsGuestStep: false,
       needsRooms: false,
       needsDuration: false,
       needsDeliveryTime: false,
-      needsRoute: true,
-      quantityLabel: 'عدد المقاعد / المركبات',
+      needsRoute: false,
     };
   }
 
@@ -155,7 +210,22 @@ export function resolveBookingFlow(
     };
   }
 
-  if (/مسبح|نادي/i.test(cat)) {
+  if (/نوادي|نادي|gym|fitness|club/i.test(cat) && !/مسبح|مسابح|pool/i.test(cat)) {
+    return {
+      kind: 'MEMBERSHIP',
+      bookingType: 'EVENT_DAY',
+      title: 'اشتراك النادي',
+      question: 'اختر يوم بداية الاشتراك',
+      hint: 'اختر يوم البداية — مدة الاشتراك حسب الباقة (بالأيام أو الأشهر).',
+      needsGuestStep: false,
+      needsRooms: false,
+      needsDuration: false,
+      needsDeliveryTime: false,
+      needsRoute: false,
+    };
+  }
+
+  if (/مسبح|مسابح|pool/i.test(cat)) {
     return {
       kind: 'SLOT_DURATION',
       bookingType: 'SLOT',
@@ -201,13 +271,13 @@ export function resolveBookingFlow(
     };
   }
 
-  if (/تصوير/i.test(cat)) {
+  if (/تصوير|camera|photo/i.test(cat)) {
     return {
-      kind: 'SLOT_TIME',
-      bookingType: 'SLOT',
+      kind: 'DAY_PERIOD',
+      bookingType: 'EVENT_DAY',
       title: 'حجز جلسة التصوير',
-      question: 'اختر اليوم والوقت المناسب',
-      hint: 'اختر يوماً ثم حدد الموعد المتاح. الأيام غير المتاحة تظهر مشطوبة.',
+      question: 'في أي يوم تريد الجلسة؟',
+      hint: 'اختر يوماً متاحاً واحداً — الحجز ليوم كامل حسب الباقة.',
       needsGuestStep: false,
       needsRooms: false,
       needsDuration: false,
@@ -246,7 +316,8 @@ export function resolveBookingFlow(
     };
   }
 
-  // طيرمانات / طرمانات use the same stay booking flow as chalets (below).
+  // طيرمانات / طرمانات: default stay/day package; hourly packages override via
+  // attributes.pricePeriods in BookingDateScreen (slot timeline).
 
   if (/فنادق|فندق|غرف|hotel/i.test(cat)) {
     return {
@@ -261,21 +332,6 @@ export function resolveBookingFlow(
       needsDeliveryTime: false,
       needsRoute: false,
       quantityLabel: 'عدد الغرف',
-    };
-  }
-
-  if (/سيارة|سيارات/i.test(cat)) {
-    return {
-      kind: 'STAY_RANGE',
-      bookingType: 'UNIT_DAY',
-      title: 'حجز السيارة',
-      question: 'حدد تاريخ الاستلام والإرجاع',
-      hint: 'اختر يوم الاستلام ثم يوم الإرجاع. يتم التحقق من عدم تداخل الحجوزات.',
-      needsGuestStep: false,
-      needsRooms: false,
-      needsDuration: false,
-      needsDeliveryTime: false,
-      needsRoute: false,
     };
   }
 
@@ -375,6 +431,46 @@ export function addDaysIso(iso: string, days: number): string {
   const d = new Date(`${iso}T12:00:00`);
   d.setDate(d.getDate() + days);
   return toIsoDate(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+export function addMonthsIso(iso: string, months: number): string {
+  const d = new Date(`${iso}T12:00:00`);
+  const day = d.getDate();
+  d.setMonth(d.getMonth() + months);
+  // Clamp overflow (e.g. Jan 31 + 1 month → last day of Feb).
+  if (d.getDate() < day) d.setDate(0);
+  return toIsoDate(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/** Inclusive membership end date from start + duration. */
+export function membershipEndInclusive(
+  startIso: string,
+  unit: MembershipUnit,
+  duration: number,
+): string {
+  const n = Math.max(1, Math.floor(duration));
+  if (unit === 'MONTHS') {
+    return addDaysIso(addMonthsIso(startIso, n), -1);
+  }
+  return addDaysIso(startIso, n - 1);
+}
+
+export function membershipLabel(
+  unit?: MembershipUnit | null,
+  duration?: number | null,
+): string | undefined {
+  if (unit == null || duration == null || !Number.isFinite(duration) || duration < 1) {
+    return undefined;
+  }
+  const n = Math.floor(duration);
+  if (unit === 'MONTHS') {
+    if (n === 1) return 'اشتراك شهر واحد';
+    if (n === 2) return 'اشتراك شهرين';
+    return `اشتراك ${n} أشهر`;
+  }
+  if (n === 1) return 'اشتراك يوم واحد';
+  if (n === 2) return 'اشتراك يومين';
+  return `اشتراك ${n} يوم`;
 }
 
 export function nightsBetween(checkIn: string, checkOut: string): number {

@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from 'react';
 import { api, ApiError } from '../api';
-import { DEMO_PASSWORD, DEMO_PHONE, setSession } from '../session';
+import { setSession } from '../session';
 
 export function Login({ onSuccess }: { onSuccess: () => void }) {
-  const [phone, setPhone] = useState(DEMO_PHONE);
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
@@ -96,13 +96,6 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
             <button type="submit" className="btn primary" disabled={busy}>
               {busy ? 'Signing in…' : 'Enter dashboard'}
             </button>
-          </div>
-          <div className="login-hint">
-            Seeded admin (if demo data is loaded)
-            <br />
-            <code>{DEMO_PHONE}</code>
-            <br />
-            <code>{DEMO_PASSWORD}</code>
           </div>
         </form>
       </section>

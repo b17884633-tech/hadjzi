@@ -25,7 +25,7 @@ const FALLBACK_CITIES: Destination[] = [
 ];
 
 export function SearchScreen() {
-  const { container, formatPrice } = useApp();
+  const { container } = useApp();
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
@@ -108,7 +108,6 @@ export function SearchScreen() {
           cityName={city.name}
           providers={providers}
           loading={loading}
-          formatPrice={formatPrice}
           onOpenProvider={openProvider}
           header={header}
         />

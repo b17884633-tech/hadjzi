@@ -37,6 +37,29 @@ function assertProductionSecrets(): void {
       'PAYMENT_WEBHOOK_SECRET is weak or missing — configure before enabling payment webhooks',
     );
   }
+
+  // Without a real OTP channel the console adapter only logs codes and no
+  // customer can sign in — make that impossible to miss in production logs.
+  const hasSms =
+    (process.env.INFOBIP_API_KEY && process.env.INFOBIP_BASE_URL) ||
+    (process.env.TWILIO_ACCOUNT_SID &&
+      process.env.TWILIO_AUTH_TOKEN &&
+      process.env.TWILIO_SMS_FROM);
+  const hasFirebase =
+    process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
+    (process.env.FIREBASE_PROJECT_ID &&
+      process.env.FIREBASE_CLIENT_EMAIL &&
+      process.env.FIREBASE_PRIVATE_KEY);
+  if (!hasSms && !hasFirebase) {
+    logger.error(
+      'No OTP delivery configured (Infobip/Twilio SMS or Firebase Phone Auth) — users will not be able to log in',
+    );
+  }
+  if (process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'true') {
+    logger.warn(
+      'DB_SSL_REJECT_UNAUTHORIZED is not "true" — database TLS certificate is not being verified',
+    );
+  }
 }
 
 function resolveCorsOrigins(): string[] {

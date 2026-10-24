@@ -35,6 +35,13 @@ type ApiProvider = {
     bookingType?: 'SLOT' | 'UNIT_DAY' | 'EVENT_DAY' | 'QUANTITY';
   } | null;
   services?: ApiService[];
+  activeOffer?: {
+    id: string;
+    providerId?: string;
+    discountPercent?: number | string;
+    startsOn?: string;
+    endsOn?: string;
+  } | null;
 };
 
 function toNumber(value: number | string | undefined | null): number | undefined {
@@ -87,6 +94,15 @@ export function mapApiProvider(raw: ApiProvider): Provider {
     reviewCount: toNumber(raw.reviewCount) ?? 0,
     latitude: toNumber(raw.latitude) ?? null,
     longitude: toNumber(raw.longitude) ?? null,
+    activeOffer: raw.activeOffer?.id
+      ? {
+          id: String(raw.activeOffer.id),
+          providerId: String(raw.activeOffer.providerId ?? raw.id),
+          discountPercent: toNumber(raw.activeOffer.discountPercent) ?? 0,
+          startsOn: String(raw.activeOffer.startsOn ?? '').slice(0, 10),
+          endsOn: String(raw.activeOffer.endsOn ?? '').slice(0, 10),
+        }
+      : null,
   };
 }
 
@@ -149,6 +165,26 @@ export function findCategoryInTree(
     }
   }
   return null;
+}
+
+/** Walk category + parents so «قسم النساء» under «جلسات التصوير» still resolves as photo. */
+export function categoryAncestorNames(
+  tree: Category[],
+  categoryId?: number | null,
+): string[] {
+  const names: string[] = [];
+  let current =
+    categoryId != null ? findCategoryInTree(tree, categoryId) : null;
+  const seen = new Set<number>();
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    if (current.name?.trim()) names.push(current.name.trim());
+    current =
+      current.parentId != null
+        ? findCategoryInTree(tree, current.parentId)
+        : null;
+  }
+  return names;
 }
 
 function isActiveService(s: ServiceItem): boolean {

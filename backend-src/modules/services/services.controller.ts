@@ -17,6 +17,7 @@ import {
   UpdateAvailabilityStatusDto,
   UpdateServiceDto,
 } from './dto/service.dto';
+import { CreateCarBrandDto } from './dto/car-brand.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -37,6 +38,19 @@ export class ServicesController {
   @Get('mine')
   mine(@CurrentUser() user: User, @Query('providerId') providerId?: string) {
     return this.services.listMine(user.id, providerId);
+  }
+
+  /** Must be registered before :id so "car-brands" is not treated as a UUID. */
+  @Public()
+  @Get('car-brands')
+  listCarBrands() {
+    return this.services.listCarBrands();
+  }
+
+  @Roles(UserRole.PROVIDER, UserRole.ADMIN)
+  @Post('car-brands')
+  createCarBrand(@Body() dto: CreateCarBrandDto) {
+    return this.services.ensureCarBrand(dto.name);
   }
 
   @Public()

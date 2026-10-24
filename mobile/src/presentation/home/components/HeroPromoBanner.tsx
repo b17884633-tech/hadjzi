@@ -10,7 +10,6 @@ import {
   View,
 } from 'react-native';
 import { AppText as Text } from '@/core/ui/components/AppText';
-import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '../../../core/ui/theme';
 import { Banner } from '../../../domain/model/Banner';
@@ -116,11 +115,22 @@ export function defaultPromosForCategory(categoryName?: string | null): PromoSli
       },
     ]);
   }
-  if (/مسبح|نادي/i.test(name)) {
+  if (/نوادي|نادي|gym|fitness|club/i.test(name) && !/مسبح|مسابح|pool/i.test(name)) {
     return pack([
       {
-        title: 'مسابح ونوادٍ يومية',
-        subtitle: 'استرخِ أو تمرّن في أفضل الأماكن القريبة',
+        title: 'اشتراكات النوادي الرياضية',
+        subtitle: 'باقات بالأيام أو الأشهر — اختر يوم البداية',
+        badge: 'نوادي',
+        cta: 'اشترك',
+        imageUrl: FALLBACK_IMAGES[4],
+      },
+    ]);
+  }
+  if (/مسبح|مسابح|pool/i.test(name)) {
+    return pack([
+      {
+        title: 'مسابح يومية',
+        subtitle: 'استرخِ في أفضل المسابح القريبة',
         badge: 'ترفيه',
         cta: 'استكشف',
         imageUrl: FALLBACK_IMAGES[3],
@@ -250,6 +260,8 @@ export function resolvePromoSlides(
 
 type Props = {
   banners?: Banner[];
+  /** When set, used as-is (e.g. home offer facilities). Empty = hide banner. */
+  slides?: PromoSlide[] | null;
   categoryId?: number | string | null;
   categoryName?: string | null;
   onPressSlide?: (slide: PromoSlide) => void;
@@ -258,15 +270,16 @@ type Props = {
 
 export function HeroPromoBanner({
   banners = [],
+  slides: slidesProp,
   categoryId,
   categoryName,
   onPressSlide,
   onExplore,
 }: Props) {
-  const slides = useMemo(
-    () => resolvePromoSlides(banners, { categoryId, categoryName }),
-    [banners, categoryId, categoryName],
-  );
+  const slides = useMemo(() => {
+    if (slidesProp != null) return slidesProp;
+    return resolvePromoSlides(banners, { categoryId, categoryName });
+  }, [slidesProp, banners, categoryId, categoryName]);
   const listRef = useRef<ScrollView>(null);
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -333,29 +346,24 @@ export function HeroPromoBanner({
               imageStyle={styles.imageRadius}
             >
               <LinearGradient
-                colors={['rgba(10,22,40,0.2)', 'rgba(10,22,40,0.92)']}
-                locations={[0.1, 1]}
+                colors={['rgba(10,22,40,0.35)', 'rgba(10,22,40,0.15)', 'rgba(10,22,40,0.92)']}
+                locations={[0, 0.35, 1]}
                 style={styles.gradient}
               >
-                <View style={styles.content}>
+                {/* Percentage / badge pinned to the top */}
+                <View style={styles.badgeTop}>
                   <View style={styles.badge}>
-                    <Ionicons name="sparkles" size={11} color={theme.colors.primary} />
                     <Text style={styles.badgeText}>{item.badge}</Text>
                   </View>
+                </View>
 
-                  <View style={styles.copy}>
-                    <Text style={styles.title} numberOfLines={2}>
-                      {item.title}
-                    </Text>
-                    <Text style={styles.subtitle} numberOfLines={2}>
-                      {item.subtitle}
-                    </Text>
-                  </View>
-
-                  <View style={styles.ctaBtn}>
-                    <Text style={styles.ctaText}>{item.cta}</Text>
-                    <Ionicons name="arrow-back" size={14} color="#fff" />
-                  </View>
+                <View style={styles.copy}>
+                  <Text style={styles.title} numberOfLines={2}>
+                    {item.title}
+                  </Text>
+                  <Text style={styles.subtitle} numberOfLines={2}>
+                    {item.subtitle}
+                  </Text>
                 </View>
               </LinearGradient>
             </ImageBackground>
@@ -399,29 +407,30 @@ const styles = StyleSheet.create({
   gradient: {
     flex: 1,
     borderRadius: 18,
-    paddingHorizontal: 16,
-    paddingTop: 14,
+    paddingHorizontal: 14,
+    paddingTop: 12,
     paddingBottom: 14,
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
   },
-  content: {
+  badgeTop: {
     width: '100%',
+    // forceRTL: flex-start = physical right → pill sits top-right
     alignItems: 'flex-start',
-    gap: 10,
   },
   badge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
     backgroundColor: theme.colors.accent,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 12,
+    paddingTop: 5,
+    paddingBottom: 4,
     borderRadius: 999,
   },
   badgeText: {
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '800',
     color: theme.colors.primary,
+    textAlign: 'right',
+    lineHeight: 16,
+    includeFontPadding: false,
   },
   copy: {
     width: '100%',
@@ -444,22 +453,6 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.88)',
     textAlign: 'right',
     writingDirection: 'rtl',
-  },
-  ctaBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(255,255,255,0.16)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.35)',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 999,
-  },
-  ctaText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#fff',
   },
   dots: {
     flexDirection: 'row',

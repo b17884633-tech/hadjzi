@@ -17,6 +17,7 @@ import { Region } from '../../search/entities/region.entity';
 import { ServiceItem } from '../../services/entities/service-item.entity';
 import { Booking } from '../../booking/entities/booking.entity';
 import { Review } from '../../reviews/entities/review.entity';
+import { ProviderOffer } from './provider-offer.entity';
 
 @Entity('providers')
 export class Provider {
@@ -118,4 +119,7 @@ export class Provider {
 
   @OneToMany(() => Review, (review) => review.provider)
   reviews?: Review[];
+
+  @OneToMany(() => ProviderOffer, (offer) => offer.provider)
+  offers?: ProviderOffer[];
 }

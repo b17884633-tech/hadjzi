@@ -6,6 +6,7 @@ import { MainNavigator } from './MainNavigator';
 import { RootStackParamList } from './types';
 import { WelcomeScreen } from '../welcome/WelcomeScreen';
 import { ProviderProfileScreen } from '../provider/ProviderProfileScreen';
+import { CatalogProductScreen } from '../categories/CatalogProductScreen';
 import { ServiceListScreen } from '../provider/ServiceListScreen';
 import { SearchResultsScreen } from '../search/SearchResultsScreen';
 import { BookingSummaryScreen } from '../booking/summary/BookingSummaryScreen';
@@ -71,6 +72,11 @@ export function RootNavigator() {
       <Stack.Screen
         name="ProviderProfile"
         component={ProviderProfileScreen}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="CatalogProduct"
+        component={CatalogProductScreen}
         options={{ headerShown: false }}
       />
       <Stack.Screen

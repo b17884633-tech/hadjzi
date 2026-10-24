@@ -14,6 +14,7 @@ import { FilterIcon } from '../../core/ui/components/FilterIcon';
 import { SmoothBottomSheet } from '../../core/ui/components/SmoothBottomSheet';
 import { theme } from '../../core/ui/theme';
 import { Destination } from '../../domain/model/Search';
+import { useApp } from '../../di/AppProvider';
 import { addDaysIso, toIsoDate } from '../booking/bookingFlow';
 import {
   CategoryFilterValues,
@@ -37,6 +38,10 @@ type Props = {
   categoryName?: string | null;
   bookingType?: string | null;
   cities: Destination[];
+  /** Brands already present on listed products (merged with API catalog). */
+  productBrands?: string[];
+  /** Specialties already present on listed health facilities. */
+  productSpecialties?: string[];
   initial: CategoryFilterValues;
   onApply: (filters: CategoryFilterValues) => void;
 };
@@ -52,9 +57,12 @@ export function CategoryFiltersSheet({
   categoryName,
   bookingType,
   cities,
+  productBrands = [],
+  productSpecialties = [],
   initial,
   onApply,
 }: Props) {
+  const { container } = useApp();
   const profile = useMemo(
     () => resolveCategoryFilterProfile(categoryName, bookingType),
     [categoryName, bookingType],
@@ -62,6 +70,8 @@ export function CategoryFiltersSheet({
 
   const [draft, setDraft] = useState<CategoryFilterValues>(initial);
   const [cityOpen, setCityOpen] = useState(false);
+  const [brandOpen, setBrandOpen] = useState(false);
+  const [specialtyOpen, setSpecialtyOpen] = useState(false);
   const [priceMin, setPriceMin] = useState(PRICE_MIN);
   const [priceMax, setPriceMax] = useState(PRICE_MAX);
   const [minText, setMinText] = useState('');
@@ -70,7 +80,38 @@ export function CategoryFiltersSheet({
   const [distanceText, setDistanceText] = useState('');
   const [distanceActive, setDistanceActive] = useState(false);
   const [priceActive, setPriceActive] = useState(false);
-  const cityOptions = cities.slice(0, 40);
+  const [apiBrands, setApiBrands] = useState<string[]>([]);
+  const [apiSpecialties, setApiSpecialties] = useState<string[]>([]);
+  const cityOptions = useMemo(
+    () =>
+      [...cities].sort((a, b) =>
+        (a.name ?? '').localeCompare(b.name ?? '', 'ar'),
+      ),
+    [cities],
+  );
+
+  const mergeNamedOptions = (api: string[], local: string[]) => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const name of [...api, ...local]) {
+      const trimmed = name.trim();
+      if (!trimmed) continue;
+      const key = trimmed.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(trimmed);
+    }
+    return out.sort((a, b) => a.localeCompare(b, 'ar'));
+  };
+
+  const brandOptions = useMemo(
+    () => mergeNamedOptions(apiBrands, productBrands),
+    [apiBrands, productBrands],
+  );
+  const specialtyOptions = useMemo(
+    () => mergeNamedOptions(apiSpecialties, productSpecialties),
+    [apiSpecialties, productSpecialties],
+  );
 
   useEffect(() => {
     if (!visible) return;
@@ -88,9 +129,69 @@ export function CategoryFiltersSheet({
     setDistanceKm(d);
     setDistanceText(initial.maxDistanceKm != null ? String(d) : '');
     setCityOpen(false);
+    setBrandOpen(false);
+    setSpecialtyOpen(false);
   }, [visible, initial]);
 
   const has = (key: FilterFieldKey) => profile.fields.includes(key);
+
+  useEffect(() => {
+    if (!visible || !has('brands')) return;
+    let cancelled = false;
+    void container.serviceApi
+      .listCarBrands()
+      .then((list) => {
+        if (cancelled) return;
+        setApiBrands(list.map((b) => b.name).filter(Boolean));
+      })
+      .catch(() => {
+        if (!cancelled) setApiBrands([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- has() depends on profile
+  }, [visible, profile.fields, container.serviceApi]);
+
+  useEffect(() => {
+    if (!visible || !has('specialties')) return;
+    let cancelled = false;
+    void container.providerApi
+      .listMedicalSpecialties()
+      .then((list) => {
+        if (cancelled) return;
+        setApiSpecialties(list.map((s) => s.name).filter(Boolean));
+      })
+      .catch(() => {
+        if (!cancelled) setApiSpecialties([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- has() depends on profile
+  }, [visible, profile.fields, container.providerApi]);
+
+  const toggleNamedFilter = (
+    key: 'brands' | 'specialties',
+    value: string,
+  ) => {
+    setDraft((prev) => {
+      const current = prev[key] ?? [];
+      const match = value.trim().toLowerCase();
+      const exists = current.some((b) => b.trim().toLowerCase() === match);
+      const next = exists
+        ? current.filter((b) => b.trim().toLowerCase() !== match)
+        : [...current, value];
+      const copy = { ...prev };
+      if (next.length) copy[key] = next;
+      else delete copy[key];
+      return copy;
+    });
+  };
+
+  const toggleBrand = (brand: string) => toggleNamedFilter('brands', brand);
+  const toggleSpecialty = (specialty: string) =>
+    toggleNamedFilter('specialties', specialty);
 
   const setNum = (key: keyof CategoryFilterValues, value?: number) => {
     setDraft((prev) => {
@@ -161,9 +262,29 @@ export function CategoryFiltersSheet({
     setDistanceText('');
     setDistanceActive(false);
     setCityOpen(false);
+    setBrandOpen(false);
+    setSpecialtyOpen(false);
   };
 
   const mode = profile.availabilityMode;
+  const selectedBrands = draft.brands ?? [];
+  const brandSelectLabel =
+    selectedBrands.length === 0
+      ? 'اختر الماركة'
+      : selectedBrands.length === 1
+        ? selectedBrands[0]
+        : selectedBrands.length === 2
+          ? selectedBrands.join('، ')
+          : `${selectedBrands.length} ماركات`;
+  const selectedSpecialties = draft.specialties ?? [];
+  const specialtySelectLabel =
+    selectedSpecialties.length === 0
+      ? 'اختر التخصص'
+      : selectedSpecialties.length === 1
+        ? selectedSpecialties[0]
+        : selectedSpecialties.length === 2
+          ? selectedSpecialties.join('، ')
+          : `${selectedSpecialties.length} تخصصات`;
 
   return (
     <SmoothBottomSheet visible={visible} onClose={onClose} sheetStyle={styles.sheet}>
@@ -214,7 +335,14 @@ export function CategoryFiltersSheet({
 
         {has('place') ? (
           <Section title="المدينة">
-            <Pressable style={styles.select} onPress={() => setCityOpen((o) => !o)}>
+            <Pressable
+              style={styles.select}
+              onPress={() => {
+                setCityOpen((o) => !o);
+                setBrandOpen(false);
+                setSpecialtyOpen(false);
+              }}
+            >
               <Ionicons name="location-outline" size={18} color={theme.colors.accentDark} />
               <Text style={[styles.selectText, !draft.cityName && styles.placeholder]}>
                 {draft.cityName ?? 'اختر المدينة'}
@@ -226,7 +354,29 @@ export function CategoryFiltersSheet({
               />
             </Pressable>
             {cityOpen ? (
-              <View style={styles.cityList}>
+              <ScrollView
+                style={styles.cityList}
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator
+              >
+                {draft.cityId != null ? (
+                  <Pressable
+                    style={styles.cityRow}
+                    onPress={() => {
+                      setDraft((prev) => {
+                        const next = { ...prev };
+                        delete next.cityId;
+                        delete next.cityName;
+                        return next;
+                      });
+                      setCityOpen(false);
+                    }}
+                  >
+                    <Text style={styles.cityName}>كل المدن</Text>
+                    <Ionicons name="close-circle-outline" size={16} color={MUTED} />
+                  </Pressable>
+                ) : null}
                 {cityOptions.map((city) => {
                   const selected = draft.cityId === city.id;
                   return (
@@ -251,7 +401,7 @@ export function CategoryFiltersSheet({
                     </Pressable>
                   );
                 })}
-              </View>
+              </ScrollView>
             ) : null}
           </Section>
         ) : null}
@@ -429,6 +579,195 @@ export function CategoryFiltersSheet({
                 );
               })}
             </View>
+          </Section>
+        ) : null}
+
+        {has('brands') ? (
+          <Section title="الماركة">
+            {brandOptions.length === 0 ? (
+              <Text style={styles.hintMuted}>
+                لا توجد ماركات بعد — تُضاف عند تسجيل السيارات من المزودين.
+              </Text>
+            ) : (
+              <>
+                <Pressable
+                  style={styles.select}
+                  onPress={() => {
+                    setBrandOpen((o) => !o);
+                    setCityOpen(false);
+                    setSpecialtyOpen(false);
+                  }}
+                >
+                  <Ionicons
+                    name="car-outline"
+                    size={18}
+                    color={theme.colors.accentDark}
+                  />
+                  <Text
+                    style={[
+                      styles.selectText,
+                      selectedBrands.length === 0 && styles.placeholder,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {brandSelectLabel}
+                  </Text>
+                  <Ionicons
+                    name={brandOpen ? 'chevron-up' : 'chevron-down'}
+                    size={16}
+                    color={MUTED}
+                  />
+                </Pressable>
+                {brandOpen ? (
+                  <ScrollView
+                    style={styles.brandList}
+                    nestedScrollEnabled
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator
+                  >
+                    {selectedBrands.length > 0 ? (
+                      <Pressable
+                        style={styles.cityRow}
+                        onPress={() =>
+                          setDraft((prev) => {
+                            const next = { ...prev };
+                            delete next.brands;
+                            return next;
+                          })
+                        }
+                      >
+                        <Text style={styles.cityName}>مسح الاختيار</Text>
+                        <Ionicons name="close-circle-outline" size={16} color={MUTED} />
+                      </Pressable>
+                    ) : null}
+                    {brandOptions.map((brand) => {
+                      const selected = selectedBrands.some(
+                        (b) =>
+                          b.trim().toLowerCase() === brand.trim().toLowerCase(),
+                      );
+                      return (
+                        <Pressable
+                          key={brand}
+                          style={[styles.cityRow, selected && styles.cityRowOn]}
+                          onPress={() => toggleBrand(brand)}
+                        >
+                          <Text
+                            style={[
+                              styles.cityName,
+                              selected && styles.cityNameOn,
+                            ]}
+                          >
+                            {brand}
+                          </Text>
+                          {selected ? (
+                            <Ionicons
+                              name="checkmark"
+                              size={16}
+                              color={theme.colors.accent}
+                            />
+                          ) : null}
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                ) : null}
+              </>
+            )}
+          </Section>
+        ) : null}
+
+        {has('specialties') ? (
+          <Section title="التخصص">
+            {specialtyOptions.length === 0 ? (
+              <Text style={styles.hintMuted}>
+                لا توجد تخصصات بعد — تُضاف عند تسجيل المنشآت الصحية من المزودين.
+              </Text>
+            ) : (
+              <>
+                <Pressable
+                  style={styles.select}
+                  onPress={() => {
+                    setSpecialtyOpen((o) => !o);
+                    setCityOpen(false);
+                    setBrandOpen(false);
+                  }}
+                >
+                  <Ionicons
+                    name="medkit-outline"
+                    size={18}
+                    color={theme.colors.accentDark}
+                  />
+                  <Text
+                    style={[
+                      styles.selectText,
+                      selectedSpecialties.length === 0 && styles.placeholder,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {specialtySelectLabel}
+                  </Text>
+                  <Ionicons
+                    name={specialtyOpen ? 'chevron-up' : 'chevron-down'}
+                    size={16}
+                    color={MUTED}
+                  />
+                </Pressable>
+                {specialtyOpen ? (
+                  <ScrollView
+                    style={styles.brandList}
+                    nestedScrollEnabled
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator
+                  >
+                    {selectedSpecialties.length > 0 ? (
+                      <Pressable
+                        style={styles.cityRow}
+                        onPress={() =>
+                          setDraft((prev) => {
+                            const next = { ...prev };
+                            delete next.specialties;
+                            return next;
+                          })
+                        }
+                      >
+                        <Text style={styles.cityName}>مسح الاختيار</Text>
+                        <Ionicons name="close-circle-outline" size={16} color={MUTED} />
+                      </Pressable>
+                    ) : null}
+                    {specialtyOptions.map((specialty) => {
+                      const selected = selectedSpecialties.some(
+                        (s) =>
+                          s.trim().toLowerCase() ===
+                          specialty.trim().toLowerCase(),
+                      );
+                      return (
+                        <Pressable
+                          key={specialty}
+                          style={[styles.cityRow, selected && styles.cityRowOn]}
+                          onPress={() => toggleSpecialty(specialty)}
+                        >
+                          <Text
+                            style={[
+                              styles.cityName,
+                              selected && styles.cityNameOn,
+                            ]}
+                          >
+                            {specialty}
+                          </Text>
+                          {selected ? (
+                            <Ionicons
+                              name="checkmark"
+                              size={16}
+                              color={theme.colors.accent}
+                            />
+                          ) : null}
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                ) : null}
+              </>
+            )}
           </Section>
         ) : null}
 
@@ -667,6 +1006,12 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     width: '100%',
   },
+  hintMuted: {
+    fontSize: 12,
+    color: MUTED,
+    textAlign: 'right',
+    lineHeight: 18,
+  },
   body: {
     gap: 12,
     paddingBottom: 6,
@@ -763,8 +1108,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: LINE,
     borderRadius: 12,
-    overflow: 'hidden',
-    maxHeight: 160,
+    maxHeight: 320,
+  },
+  brandList: {
+    borderWidth: 1,
+    borderColor: LINE,
+    borderRadius: 12,
+    maxHeight: 320,
   },
   cityRow: {
     flexDirection: 'row',

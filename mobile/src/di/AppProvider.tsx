@@ -21,6 +21,10 @@ import {
   saveSelectedCurrency,
 } from '../data/local/currencyStorage';
 import { onUnauthorized } from '../core/network/authSession';
+import {
+  registerPushToken,
+  unregisterPushToken,
+} from '../core/notifications/pushNotifications';
 
 interface AppContextValue {
   container: AppContainer;
@@ -51,7 +55,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const unsub = onUnauthorized(() => {
-      void container.authRepository.logout().then(() => setUser(null));
+      void (async () => {
+        await unregisterPushToken(container.apiClient);
+        await container.authRepository.logout();
+        setUser(null);
+      })();
     });
     return unsub;
   }, []);
@@ -64,6 +72,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       })
       .finally(() => setIsBootstrapping(false));
   }, []);
+
+  // Bind this device's push token to the logged-in user only.
+  useEffect(() => {
+    if (!user?.id || isBootstrapping) return;
+    void registerPushToken(container.apiClient);
+  }, [user?.id, isBootstrapping]);
 
   const markWelcomeComplete = () => setHasCompletedWelcome(true);
 

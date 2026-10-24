@@ -29,6 +29,8 @@ import { HeroPromoBanner, PromoSlide } from '../home/components/HeroPromoBanner'
 import { TopRatedCard } from '../home/components/TopRatedCard';
 import { handlePromoSlidePress } from '../home/bannerNavigation';
 import { facilityRating } from '../home/facilityRating';
+import { isEcommerceCatalogCategory } from '../provider/categoryKinds';
+import { CatalogProductCard } from './CatalogProductCard';
 import { CategoryFiltersSheet } from './CategoryFiltersSheet';
 import {
   CategoryFilterValues,
@@ -38,6 +40,88 @@ import {
   filterProviders,
 } from './categoryFilters';
 import { Banner } from '../../domain/model/Banner';
+import type { ServiceItem } from '../../domain/model/Provider';
+
+type CatalogProduct = {
+  key: string;
+  providerId: string;
+  serviceId: string;
+  title: string;
+  subtitle?: string;
+  price?: number;
+  images: string[];
+  cityName?: string;
+  regionName?: string;
+  addressDetails?: string;
+  categoryName?: string;
+  rating?: number;
+  reviewCount?: number;
+  meta?: string;
+  brand?: string;
+};
+
+function catalogBrand(service: ServiceItem): string | undefined {
+  const raw = (service.attributes ?? {}) as Record<string, unknown>;
+  return typeof raw.brand === 'string' && raw.brand.trim()
+    ? raw.brand.trim()
+    : undefined;
+}
+
+function catalogMeta(service: ServiceItem, categoryName?: string): string | undefined {
+  const a = (service.attributes ?? {}) as Record<string, unknown>;
+  if (isEcommerceCatalogCategory(categoryName) && /ملبوس|ملابس|أزياء/i.test(categoryName ?? '')) {
+    const size = typeof a.size === 'string' ? a.size.trim() : '';
+    const color = typeof a.color === 'string' ? a.color.trim() : '';
+    const parts = [size ? `مقاس ${size}` : null, color || null].filter(Boolean);
+    return parts.length ? parts.join(' · ') : undefined;
+  }
+  const brand = catalogBrand(service);
+  const seats = typeof a.seats === 'number' ? a.seats : Number(a.seats);
+  const year = typeof a.year === 'number' ? a.year : Number(a.year);
+  const parts = [
+    brand || null,
+    Number.isFinite(seats) && seats > 0 ? `${seats} مقاعد` : null,
+    Number.isFinite(year) && year > 0 ? String(year) : null,
+    a.transmission === 'MANUAL' ? 'عادي' : a.transmission === 'AUTO' ? 'أوتوماتيك' : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(' · ') : undefined;
+}
+
+function flattenCatalogProducts(providers: Provider[]): CatalogProduct[] {
+  const out: CatalogProduct[] = [];
+  for (const p of providers) {
+    const services = (p.services ?? []).filter(
+      (s) => !s.status || s.status === 'ACTIVE',
+    );
+    for (const s of services) {
+      const images =
+        (s.images?.filter(Boolean) as string[] | undefined)?.length
+          ? (s.images!.filter(Boolean) as string[])
+          : s.imageUrl
+            ? [s.imageUrl]
+            : imagesFromProvider(p);
+      const categoryName = p.categoryName ?? p.category?.name;
+      out.push({
+        key: `${p.id}:${s.id}`,
+        providerId: p.id,
+        serviceId: s.id,
+        title: s.name?.trim() || 'منتج',
+        subtitle: p.businessName,
+        price: s.priceFrom ?? s.basePrice,
+        images,
+        cityName: p.cityName ?? p.city?.name,
+        regionName: p.regionName ?? p.region?.name,
+        addressDetails: p.addressDetails,
+        categoryName,
+        rating: facilityRating(p),
+        reviewCount: p.reviewCount ?? 0,
+        meta: catalogMeta(s, categoryName),
+        brand: catalogBrand(s),
+      });
+    }
+  }
+  return out;
+}
 
 type Props = {
   route: NativeStackScreenProps<HomeStackParamList, 'Category'>['route'];
@@ -130,6 +214,7 @@ export function CategoryScreen({ route, navigation }: Props) {
   const title = category?.name ?? titleParam ?? 'التصنيف';
   const subcategories = category?.children ?? [];
   const bookingType = category?.bookingType;
+  const isCatalog = isEcommerceCatalogCategory(title);
 
   const filtered = useMemo(() => {
     const byFilters = filterProviders(providers, filters);
@@ -140,11 +225,41 @@ export function CategoryScreen({ route, navigation }: Props) {
       const city = (p.cityName ?? p.city?.name ?? '').toLowerCase();
       const cat = (p.categoryName ?? p.category?.name ?? '').toLowerCase();
       const addr = (p.addressDetails ?? '').toLowerCase();
+      const serviceHit = (p.services ?? []).some((s) =>
+        (s.name ?? '').toLowerCase().includes(q),
+      );
       return (
-        name.includes(q) || city.includes(q) || cat.includes(q) || addr.includes(q)
+        name.includes(q) ||
+        city.includes(q) ||
+        cat.includes(q) ||
+        addr.includes(q) ||
+        serviceHit
       );
     });
   }, [providers, filters, query]);
+
+  const catalogProducts = useMemo(() => {
+    if (!isCatalog) return [] as CatalogProduct[];
+    const q = query.trim().toLowerCase();
+    let all = flattenCatalogProducts(filtered);
+    const brandKeys = (filters.brands ?? []).map((b) => b.trim().toLowerCase());
+    if (brandKeys.length) {
+      all = all.filter(
+        (item) =>
+          !!item.brand &&
+          brandKeys.includes(item.brand.trim().toLowerCase()),
+      );
+    }
+    if (!q) return all;
+    return all.filter(
+      (item) =>
+        item.title.toLowerCase().includes(q) ||
+        (item.subtitle ?? '').toLowerCase().includes(q) ||
+        (item.meta ?? '').toLowerCase().includes(q) ||
+        (item.brand ?? '').toLowerCase().includes(q),
+    );
+  }, [filtered, isCatalog, query, filters.brands]);
+
   const featured = useMemo(() => filtered.slice(0, 8), [filtered]);
   const topRated = useMemo(
     () =>
@@ -161,13 +276,51 @@ export function CategoryScreen({ route, navigation }: Props) {
 
   const activeCount = countActiveFilters(filters);
   const chips = activeFilterChips(filters);
+  const productBrands = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const item of flattenCatalogProducts(providers)) {
+      const brand = item.brand?.trim();
+      if (!brand) continue;
+      const key = brand.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(brand);
+    }
+    return out;
+  }, [providers]);
+
+  const productSpecialties = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const p of providers) {
+      const raw = p.attributes?.specialty;
+      const specialty =
+        typeof raw === 'string' ? raw.trim() : '';
+      if (!specialty) continue;
+      const key = specialty.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(specialty);
+    }
+    return out;
+  }, [providers]);
 
   const openCategory = (cat: Category) => {
     navigation.push('Category', { categoryId: cat.id, title: cat.name });
   };
 
-  const openProvider = (providerId: string) =>
-    navigation.navigate('ProviderProfile', { providerId });
+  const openProvider = (providerId: string, serviceId?: string) =>
+    navigation.navigate('ProviderProfile', { providerId, serviceId });
+
+  const openProduct = (providerId: string, serviceId: string) =>
+    navigation.navigate('CatalogProduct', { providerId, serviceId });
+
+  const catalogSectionTitle = /ملبوس|ملابس/i.test(title)
+    ? 'المنتجات'
+    : /نقل/i.test(title)
+      ? 'المركبات'
+      : 'السيارات';
 
   const openSearch = () =>
     navigation.navigate('SearchResults', {
@@ -208,6 +361,8 @@ export function CategoryScreen({ route, navigation }: Props) {
       else if (key === 'bathrooms') delete next.minBathrooms;
       else if (key === 'capacity') delete next.minCapacity;
       else if (key === 'players') delete next.minPlayers;
+      else if (key === 'brands') delete next.brands;
+      else if (key === 'specialties') delete next.specialties;
       else if (key === 'availability') {
         delete next.availableDate;
         delete next.availableEndDate;
@@ -226,7 +381,9 @@ export function CategoryScreen({ route, navigation }: Props) {
           <TextInput
             value={query}
             onChangeText={setQuery}
-            placeholder="ابحث عن منشأة.."
+            placeholder={
+              isCatalog ? `ابحث في ${catalogSectionTitle}..` : 'ابحث عن منشأة..'
+            }
             placeholderTextColor="#9AA6B2"
             style={styles.searchInput}
             returnKeyType="search"
@@ -312,15 +469,43 @@ export function CategoryScreen({ route, navigation }: Props) {
 
         <View style={styles.section}>
           <SectionHeading
-            title="عروض في هذا التصنيف"
+            title={isCatalog ? catalogSectionTitle : 'عروض في هذا التصنيف'}
             action="عرض الكل"
             onPress={openSearch}
-            count={filtered.length}
+            count={isCatalog ? catalogProducts.length : filtered.length}
           />
           {loading ? (
             <OfferCardSkeletonList count={2} />
           ) : error ? (
             <Text style={styles.empty}>{error}</Text>
+          ) : isCatalog ? (
+            catalogProducts.length === 0 ? (
+              <Text style={styles.empty}>
+                {activeCount > 0
+                  ? 'لا توجد نتائج مطابقة للتصفية الحالية'
+                  : `لا توجد ${catalogSectionTitle} في هذا التصنيف حالياً`}
+              </Text>
+            ) : (
+              <View style={styles.productGrid}>
+                {catalogProducts.map((item) => (
+                  <CatalogProductCard
+                    key={item.key}
+                    product={{
+                      id: item.serviceId,
+                      title: item.title,
+                      price: item.price,
+                      image: item.images[0],
+                      shopName: item.subtitle,
+                      cityName: item.cityName,
+                      rating: item.rating,
+                      reviewCount: item.reviewCount,
+                      verified: true,
+                    }}
+                    onPress={() => openProduct(item.providerId, item.serviceId)}
+                  />
+                ))}
+              </View>
+            )
           ) : featured.length === 0 ? (
             <Text style={styles.empty}>
               {activeCount > 0
@@ -355,7 +540,7 @@ export function CategoryScreen({ route, navigation }: Props) {
           )}
         </View>
 
-        {!loading && topRated.length > 0 ? (
+        {!loading && !isCatalog && topRated.length > 0 ? (
           <View style={styles.section}>
             <SectionHeading
               title="الأعلى تقييماً"
@@ -365,7 +550,8 @@ export function CategoryScreen({ route, navigation }: Props) {
             {topRated.map((provider) => {
               const service = cheapestService(provider);
               const price = service?.priceFrom ?? service?.basePrice;
-              const categoryName = provider.categoryName ?? provider.category?.name;
+              const categoryName =
+                provider.categoryName ?? provider.category?.name;
               return (
                 <TopRatedCard
                   key={`top-${provider.id}`}
@@ -396,6 +582,8 @@ export function CategoryScreen({ route, navigation }: Props) {
         categoryName={title}
         bookingType={bookingType}
         cities={cities}
+        productBrands={productBrands}
+        productSpecialties={productSpecialties}
         initial={filters}
         onApply={setFilters}
       />
@@ -543,6 +731,12 @@ const styles = StyleSheet.create({
   },
   section: {
     marginTop: 14,
+  },
+  productGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginTop: 4,
   },
   sectionHeading: {
     flexDirection: 'row',

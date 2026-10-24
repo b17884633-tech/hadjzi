@@ -26,10 +26,10 @@ FROM (
         ('كوافير', '/icons/salon.png', 'SLOT', 7),
         ('المسابح والنوادي', '/icons/pools.png', 'SLOT', 8),
         ('الملاعب', '/icons/fields.png', 'SLOT', 9),
-        ('النقليات', '/icons/transport.png', 'SLOT', 10),
+        ('النقليات', '/icons/transport.png', 'UNIT_DAY', 10),
         ('السيارات', '/icons/cars.png', 'UNIT_DAY', 11),
         ('الزفافين والفنانين', '/icons/artists.png', 'EVENT_DAY', 12),
-        ('جلسات التصوير', '/icons/photo.png', 'SLOT', 13)
+        ('جلسات التصوير', '/icons/photo.png', 'EVENT_DAY', 13)
 ) AS v(name, icon_url, booking_type, sort_order)
 WHERE NOT EXISTS (
     SELECT 1 FROM categories c WHERE c.name = v.name AND c.parent_id IS NULL
@@ -60,6 +60,7 @@ FROM (
         ('مستلزمات الأعراس', 'الثلاجات', '/icons/fridge.png', 'QUANTITY', 9),
         ('مستلزمات الأعراس', 'خيام', '/icons/tents.png', 'QUANTITY', 10),
         ('مستلزمات الأعراس', 'طباخين', '/icons/chefs.png', 'QUANTITY', 11),
+        ('مستلزمات الأعراس', 'الملبوسات', '/icons/apparel.png', 'UNIT_DAY', 12),
         -- كوافير
         ('كوافير', 'قسم النساء', '/icons/women.png', 'SLOT', 1),
         ('كوافير', 'قسم الرجال', '/icons/men.png', 'SLOT', 2),
@@ -70,8 +71,8 @@ FROM (
         ('الزفافين والفنانين', 'قسم النساء', '/icons/women-artists.png', 'EVENT_DAY', 1),
         ('الزفافين والفنانين', 'قسم الرجال', '/icons/men-artists.png', 'EVENT_DAY', 2),
         -- جلسات تصوير
-        ('جلسات التصوير', 'قسم النساء', '/icons/photo-women.png', 'SLOT', 1),
-        ('جلسات التصوير', 'قسم الرجال', '/icons/photo-men.png', 'SLOT', 2)
+        ('جلسات التصوير', 'قسم النساء', '/icons/photo-women.png', 'EVENT_DAY', 1),
+        ('جلسات التصوير', 'قسم الرجال', '/icons/photo-men.png', 'EVENT_DAY', 2)
 ) AS v(parent_name, name, icon_url, booking_type, sort_order)
 JOIN categories p ON p.name = v.parent_name AND p.parent_id IS NULL AND p.status = 'ACTIVE'
 WHERE NOT EXISTS (

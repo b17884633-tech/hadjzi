@@ -13,6 +13,8 @@ export interface FeaturedOffer {
   rating?: number;
   reviewCount?: number;
   price?: number;
+  /** e.g. "/ يوم" for catalog rentals */
+  priceSuffix?: string;
   depositPercentage?: number;
   image?: string;
   images?: string[];
@@ -83,6 +85,7 @@ export function FeaturedOfferCard({
         {offer.price != null ? (
           <Text style={styles.priceLine} numberOfLines={1}>
             يبدأ من {formatPrice(offer.price)}
+            {offer.priceSuffix ? ` ${offer.priceSuffix}` : ''}
           </Text>
         ) : null}
 

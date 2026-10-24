@@ -31,7 +31,9 @@ export type RootStackParamList = {
   Welcome: undefined;
   Auth: undefined;
   Main: NavigatorScreenParams<MainTabParamList> | undefined;
-  ProviderProfile: { providerId: string };
+  ProviderProfile: { providerId: string; serviceId?: string };
+  /** E-commerce product detail (cars / transport / apparel). */
+  CatalogProduct: { providerId: string; serviceId: string };
   ServiceList: { providerId: string };
   SearchResults: { filters?: SearchFilters };
   BookingDate: BookingDraftParams;

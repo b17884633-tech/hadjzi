@@ -17,8 +17,8 @@ import { theme } from '../../core/ui/theme';
 import { useApp } from '../../di/AppProvider';
 import { Category } from '../../domain/model/Category';
 import { Provider } from '../../domain/model/Provider';
-import { Banner } from '../../domain/model/Banner';
 import { Destination } from '../../domain/model/Search';
+import { offerPeriodLabel } from '../../domain/model/ProviderOffer';
 import { rootCategories, cheapestService } from '../../data/mappers/homeMappers';
 import { getSelectedCity, saveSelectedCity } from '../../data/local/cityStorage';
 import {
@@ -28,7 +28,11 @@ import {
 } from '../navigation/types';
 import { addDaysIso, toIsoDate } from '../booking/bookingFlow';
 import { HomeHeader } from './components/HomeHeader';
-import { HeroPromoBanner, PromoSlide } from './components/HeroPromoBanner';
+import {
+  defaultPromosForCategory,
+  HeroPromoBanner,
+  PromoSlide,
+} from './components/HeroPromoBanner';
 import { HomeSearchBar, HomeWhenFilter } from './components/HomeSearchBar';
 import { WhenPickerSheet } from './components/WhenPickerSheet';
 import { CategoryScroller } from './components/CategoryScroller';
@@ -116,7 +120,7 @@ export function HomeScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
-  const [banners, setBanners] = useState<Banner[]>([]);
+  const [offerSlides, setOfferSlides] = useState<PromoSlide[]>([]);
   const [cities, setCities] = useState<Destination[]>(FALLBACK_CITIES);
   const [selectedCity, setSelectedCity] = useState<Destination>(FALLBACK_CITIES[0]);
   const [citySheetOpen, setCitySheetOpen] = useState(false);
@@ -146,17 +150,18 @@ export function HomeScreen() {
       const activeCityId = cityId ?? selectedCity.id;
       const activeDate = date ?? isoForWhen(whenFilter, customDate);
       try {
-        const [categoryRes, searchRes, bannerRes, destinations] = await Promise.all([
-          container.categoryApi.tree(),
-          container.searchRepository.search({
-            cityId: activeCityId,
-            date: activeDate,
-          }),
-          container.bannerApi
-            .listActive()
-            .catch(() => ({ data: { data: [] as Banner[] } })),
-          container.searchRepository.getDestinations().catch(() => FALLBACK_CITIES),
-        ]);
+        const [categoryRes, searchRes, activeOffers, destinations] =
+          await Promise.all([
+            container.categoryApi.tree(),
+            container.searchRepository.search({
+              cityId: activeCityId,
+              date: activeDate,
+            }),
+            container.providerApi.listActiveOffers().catch(() => []),
+            container.searchRepository
+              .getDestinations()
+              .catch(() => FALLBACK_CITIES),
+          ]);
 
         const destList =
           Array.isArray(destinations) && destinations.length > 0
@@ -166,7 +171,31 @@ export function HomeScreen() {
 
         setCategories(categoryRes.data.data ?? []);
         setProviders(searchRes.providers ?? []);
-        setBanners(bannerRes.data.data ?? []);
+        setOfferSlides(
+          activeOffers
+            .filter((o) => o.provider?.id)
+            .map((o, i) => {
+              const pct = Number(o.discountPercent);
+              const name = o.provider?.businessName ?? 'منشأة';
+              const img = o.provider?.images?.[0];
+              return {
+                id: `offer-${o.id}`,
+                title: name,
+                subtitle: offerPeriodLabel(o.startsOn, o.endsOn),
+                badge:
+                  Number.isFinite(pct) && pct > 0
+                    ? `${pct % 1 === 0 ? pct.toFixed(0) : pct}% تخفيض`
+                    : 'عرض خاص',
+                cta: '',
+                imageUrl:
+                  img && /^https?:\/\//i.test(img)
+                    ? img
+                    : `https://images.unsplash.com/photo-1566073771259-6a8506099945?w=900&q=80&sig=${i}`,
+                actionType: 'PROVIDER' as const,
+                actionTarget: o.providerId,
+              };
+            }),
+        );
       } catch (e) {
         setError(e instanceof Error ? e.message : 'تعذر تحميل البيانات');
       } finally {
@@ -222,6 +251,14 @@ export function HomeScreen() {
     () => providers.filter((p) => matchesQuery(p, searchQuery)),
     [providers, searchQuery],
   );
+
+  /** Offer slides when available; static curated banners while loading / empty. */
+  const homeBannerSlides = useMemo(() => {
+    if (loading || offerSlides.length === 0) {
+      return defaultPromosForCategory(null);
+    }
+    return offerSlides;
+  }, [loading, offerSlides]);
 
   const hasSearch =
     searchActive ||
@@ -310,7 +347,7 @@ export function HomeScreen() {
           onNotificationsPress={openNotifications}
         />
         <HeroPromoBanner
-          banners={banners}
+          slides={homeBannerSlides}
           onPressSlide={openPromoSlide}
           onExplore={runSearch}
         />

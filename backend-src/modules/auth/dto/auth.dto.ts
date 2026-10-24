@@ -1,4 +1,12 @@
-import { IsEnum, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsEnum,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { OtpChannel } from '../../../common/enums';
 
 export class RegisterDto {
@@ -14,8 +22,10 @@ export class RegisterDto {
   @Matches(/^\+?[0-9]{9,15}$/)
   phone: string;
 
+  /** users.email is VARCHAR(100) UNIQUE — validate here so bad input is a 400, not a 500. */
   @IsOptional()
-  @IsString()
+  @IsEmail()
+  @MaxLength(100)
   email?: string;
 
   @IsOptional()
@@ -71,6 +81,7 @@ export class VerifyOtpDto {
 export class FirebaseLoginDto {
   @IsString()
   @MinLength(20)
+  @MaxLength(4096)
   idToken: string;
 
   @IsOptional()
@@ -84,6 +95,7 @@ export class FirebaseLoginDto {
   lastName?: string;
 
   @IsOptional()
-  @IsString()
+  @IsEmail()
+  @MaxLength(100)
   email?: string;
 }

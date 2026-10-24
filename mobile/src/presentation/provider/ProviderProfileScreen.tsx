@@ -24,7 +24,11 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApp } from '../../di/AppProvider';
 import { Provider, ServiceItem } from '../../domain/model/Provider';
-import { cheapestService } from '../../data/mappers/homeMappers';
+import {
+  categoryAncestorNames,
+  cheapestService,
+} from '../../data/mappers/homeMappers';
+import { resolveFacilityKind } from './categoryKinds';
 import {
   isFavorite,
   toggleFavorite,
@@ -40,14 +44,17 @@ import { parsePricePeriods } from '../../core/common/pricePeriods';
 import {
   guestsPerUnit,
   childrenPerUnit,
+  membershipLabel,
   packagePeriodLabel,
   readPackagePeriod,
   resolveBookingFlow,
+  type MembershipUnit,
 } from '../booking/bookingFlow';
 import { visualForCategory } from '../home/categoryIcons';
 import { centerForCityName, coordsForProvider } from '../search/mapGeo';
 import type { FacilityReview } from '../../data/remote/reviewApi';
 import { DETAIL, buildDetailModel, PricePackage } from './detail/detailModel';
+import { FacilityOfferBanner } from './detail/FacilityOfferBanner';
 import { PricePeriodsTicket } from './detail/PricePeriodsTicket';
 import { RatingsSection } from './detail/RatingsSection';
 import { HotelRoomsSheet } from './HotelRoomsSheet';
@@ -56,6 +63,7 @@ type Route = RouteProp<RootStackParamList, 'ProviderProfile'>;
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const HERO_H = SCREEN_W * 0.88;
+const PORTFOLIO_CARD_W = Math.round(SCREEN_W * 0.62);
 
 function collectImages(provider: Provider): string[] {
   const fromProvider = provider.images?.filter(Boolean) ?? [];
@@ -87,20 +95,35 @@ function StarRow({ rating }: { rating: number }) {
 function IconLine({
   icon,
   label,
+  hasPhotos,
+  onPress,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
+  hasPhotos?: boolean;
+  onPress?: () => void;
 }) {
-  return (
-    <View style={styles.iconLine}>
+  const body = (
+    <>
       <Ionicons name={icon} size={20} color={DETAIL.muted} />
       <Text style={styles.iconLineText}>{label}</Text>
-    </View>
+      {hasPhotos ? (
+        <Ionicons name="images-outline" size={16} color={DETAIL.navy} />
+      ) : null}
+    </>
   );
+  if (onPress) {
+    return (
+      <Pressable style={styles.iconLine} onPress={onPress}>
+        {body}
+      </Pressable>
+    );
+  }
+  return <View style={styles.iconLine}>{body}</View>;
 }
 
 export function ProviderProfileScreen() {
-  const { providerId } = useRoute<Route>().params;
+  const { providerId, serviceId: initialServiceId } = useRoute<Route>().params;
   const { container, formatPrice, user, currency } = useApp();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
@@ -112,24 +135,43 @@ export function ProviderProfileScreen() {
   const [imageIndex, setImageIndex] = useState(0);
   const [aboutExpanded, setAboutExpanded] = useState(false);
   const [fav, setFav] = useState(false);
-  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
-  const [packagesRevealed, setPackagesRevealed] = useState(false);
+  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(
+    initialServiceId ?? null,
+  );
+  const [packagesRevealed, setPackagesRevealed] = useState(!!initialServiceId);
   const [amenitiesExpanded, setAmenitiesExpanded] = useState(false);
   const [roomsOpen, setRoomsOpen] = useState(false);
   const [heroGalleryOpen, setHeroGalleryOpen] = useState(false);
+  const [portfolioGalleryOpen, setPortfolioGalleryOpen] = useState(false);
+  const [portfolioIndex, setPortfolioIndex] = useState(0);
+  const [detailGallery, setDetailGallery] = useState<{
+    title: string;
+    uris: string[];
+    index: number;
+  } | null>(null);
+  const [categoryHints, setCategoryHints] = useState<string[]>([]);
   const [reviews, setReviews] = useState<FacilityReview[]>([]);
 
   useEffect(() => {
     setLoading(true);
-    setSelectedPackageId(null);
-    setPackagesRevealed(false);
+    setSelectedPackageId(initialServiceId ?? null);
+    setPackagesRevealed(!!initialServiceId);
     setAmenitiesExpanded(false);
     setRoomsOpen(false);
     setReviews([]);
-    container.providerApi
-      .getProfile(providerId)
-      .then(async (res) => {
+    setCategoryHints([]);
+    Promise.all([
+      container.providerApi.getProfile(providerId),
+      container.categoryApi.tree().catch(() => ({ data: { data: [] as never[] } })),
+    ])
+      .then(async ([res, treeRes]) => {
         const p = res.data.data;
+        const treeData = treeRes.data.data ?? [];
+        const ancestors = categoryAncestorNames(
+          treeData,
+          p.categoryId ?? p.category?.id ?? null,
+        );
+        setCategoryHints(ancestors);
         try {
           const summary = await container.reviewApi.summary(providerId);
           p.rating = summary.count > 0 ? summary.average : undefined;
@@ -141,14 +183,18 @@ export function ProviderProfileScreen() {
           setReviews([]);
         }
         setProvider(p);
-        const firstActive =
-          (p.services ?? []).find((s) => !s.status || s.status === 'ACTIVE') ??
-          null;
-        setSelectedPackageId(firstActive?.id ?? null);
+        const activeServices = (p.services ?? []).filter(
+          (s) => !s.status || s.status === 'ACTIVE',
+        );
+        const fromRoute = initialServiceId
+          ? activeServices.find((s) => s.id === initialServiceId)
+          : undefined;
+        setSelectedPackageId(fromRoute?.id ?? activeServices[0]?.id ?? null);
+        if (fromRoute) setPackagesRevealed(true);
       })
       .catch(() => undefined)
       .finally(() => setLoading(false));
-  }, [container, providerId]);
+  }, [container, providerId, initialServiceId]);
 
   useEffect(() => {
     if (!user?.id) {
@@ -204,8 +250,20 @@ export function ProviderProfileScreen() {
     );
   }, [activeServices, selectedPackageId]);
   const detail = useMemo(
-    () => (provider ? buildDetailModel(provider, selectedService) : null),
-    [provider, selectedService],
+    () =>
+      provider
+        ? buildDetailModel(provider, selectedService, categoryHints)
+        : null,
+    [provider, selectedService, categoryHints],
+  );
+  const facilityKind = useMemo(
+    () =>
+      resolveFacilityKind(
+        provider?.categoryName,
+        provider?.category?.name,
+        ...categoryHints,
+      ),
+    [provider, categoryHints],
   );
   const selectedPackage = useMemo(() => {
     if (!detail?.packages.length) return null;
@@ -261,13 +319,44 @@ export function ProviderProfileScreen() {
       navigation.navigate('Auth');
       return;
     }
-    const categoryName = provider.categoryName ?? provider.category?.name ?? 'خدمة';
-    const bookingType =
-      service.bookingType ??
-      provider.bookingType ??
-      provider.category?.bookingType ??
-      resolveBookingFlow(categoryName).bookingType;
+    const leafName = provider.categoryName ?? provider.category?.name ?? 'خدمة';
+    const rootHint =
+      categoryHints.find((n) => /تصوير|camera|photo/i.test(n)) ??
+      categoryHints[categoryHints.length - 1];
+    const categoryName =
+      facilityKind === 'photo' && rootHint ? rootHint : leafName;
     const attrs = (service.attributes ?? {}) as Record<string, unknown>;
+    const pricePeriods = parsePricePeriods(attrs.pricePeriods);
+    const isPoolDayPackage =
+      facilityKind === 'pool' &&
+      (pkg?.pricingMode === 'FIXED' ||
+        (attrs.pricingMode === 'FIXED' && pricePeriods.length === 0));
+    const isGymMembership = facilityKind === 'gym';
+    const membershipUnit: MembershipUnit | undefined = isGymMembership
+      ? pkg?.membershipUnit ??
+        (attrs.membershipUnit === 'DAYS' || attrs.membershipUnit === 'MONTHS'
+          ? attrs.membershipUnit
+          : 'MONTHS')
+      : undefined;
+    const membershipDuration = isGymMembership
+      ? Math.max(
+          1,
+          Math.floor(
+            pkg?.membershipDuration ??
+              (typeof attrs.membershipDuration === 'number'
+                ? attrs.membershipDuration
+                : Number(attrs.membershipDuration)) ??
+              1,
+          ),
+        )
+      : undefined;
+    const bookingType =
+      facilityKind === 'photo' || isPoolDayPackage || isGymMembership
+        ? 'EVENT_DAY'
+        : service.bookingType ??
+          provider.bookingType ??
+          provider.category?.bookingType ??
+          resolveBookingFlow(categoryName).bookingType;
     const packagePeriod = pkg?.period ?? readPackagePeriod(attrs);
     const fromTime =
       pkg?.fromTime ??
@@ -275,7 +364,6 @@ export function ProviderProfileScreen() {
     const toTime =
       pkg?.toTime ??
       (typeof attrs.toTime === 'string' ? String(attrs.toTime).slice(0, 5) : undefined);
-    const pricePeriods = parsePricePeriods(attrs.pricePeriods);
     const minPeriodPrice = pricePeriods.length
       ? Math.min(...pricePeriods.map((p) => p.pricePerHour))
       : undefined;
@@ -294,16 +382,31 @@ export function ProviderProfileScreen() {
         0,
       depositPercentage: DEPOSIT_PERCENTAGE,
       capacityLabel: pkg?.capacityLabel,
-      timeLabel: pkg?.timeLabel ?? packagePeriodLabel(packagePeriod),
+      timeLabel:
+        pkg?.timeLabel ??
+        (isGymMembership
+          ? membershipLabel(membershipUnit, membershipDuration)
+          : isPoolDayPackage
+            ? 'يوم كامل'
+            : packagePeriodLabel(packagePeriod)),
       guestsPerRoom:
         guestsPerUnit(service.attributes) ?? guestsPerUnit(provider.attributes),
       maxChildrenPerRoom:
         childrenPerUnit(service.attributes) ??
         childrenPerUnit(provider.attributes),
       packagePeriod,
-      packageFromTime: fromTime,
-      packageToTime: toTime,
-      pricePeriods: pricePeriods.length ? pricePeriods : undefined,
+      packageFromTime:
+        isPoolDayPackage || isGymMembership ? undefined : fromTime,
+      packageToTime: isPoolDayPackage || isGymMembership ? undefined : toTime,
+      pricePeriods:
+        isPoolDayPackage || isGymMembership || !pricePeriods.length
+          ? undefined
+          : pricePeriods,
+      membershipUnit,
+      membershipDuration,
+      offerDiscountPercent: provider.activeOffer?.discountPercent,
+      offerStartsOn: provider.activeOffer?.startsOn,
+      offerEndsOn: provider.activeOffer?.endsOn,
       image:
         service.images?.[0] ??
         service.imageUrl ??
@@ -460,6 +563,10 @@ export function ProviderProfileScreen() {
 
           <Text style={styles.title}>{provider.businessName}</Text>
 
+          {provider.activeOffer ? (
+            <FacilityOfferBanner offer={provider.activeOffer} />
+          ) : null}
+
           {addressLine ? (
             <View style={styles.locRow}>
               <Ionicons name="location-sharp" size={14} color={DETAIL.muted} />
@@ -480,12 +587,42 @@ export function ProviderProfileScreen() {
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.chipsRow}
             >
-              {detail.featureChips.map((chip) => (
-                <View key={chip.key} style={styles.chip}>
-                  <Ionicons name={chip.icon} size={22} color={DETAIL.muted} />
-                  <Text style={styles.chipLabel}>{chip.label}</Text>
-                </View>
-              ))}
+              {detail.featureChips.map((chip) => {
+                const hasPhotos = (chip.images?.length ?? 0) > 0;
+                const content = (
+                  <>
+                    <Ionicons name={chip.icon} size={22} color={DETAIL.muted} />
+                    <Text style={styles.chipLabel}>{chip.label}</Text>
+                    {hasPhotos ? (
+                      <View style={styles.chipPhotoBadge}>
+                        <Ionicons name="images-outline" size={12} color={DETAIL.navy} />
+                      </View>
+                    ) : null}
+                  </>
+                );
+                if (hasPhotos) {
+                  return (
+                    <Pressable
+                      key={chip.key}
+                      style={[styles.chip, styles.chipTappable]}
+                      onPress={() =>
+                        setDetailGallery({
+                          title: chip.label,
+                          uris: chip.images!,
+                          index: 0,
+                        })
+                      }
+                    >
+                      {content}
+                    </Pressable>
+                  );
+                }
+                return (
+                  <View key={chip.key} style={styles.chip}>
+                    {content}
+                  </View>
+                );
+              })}
             </ScrollView>
           ) : null}
 
@@ -499,12 +636,68 @@ export function ProviderProfileScreen() {
             </Pressable>
           ) : null}
 
+          {detail.showPortfolio ? (
+            <>
+              <View style={styles.divider} />
+              <View style={styles.portfolioHeader}>
+                <Pressable
+                  style={styles.portfolioShowAll}
+                  onPress={() => {
+                    setPortfolioIndex(0);
+                    setPortfolioGalleryOpen(true);
+                  }}
+                >
+                  <Ionicons name="chevron-back" size={16} color={DETAIL.navy} />
+                  <Text style={styles.portfolioShowAllText}>عرض الكل</Text>
+                </Pressable>
+                <Text style={styles.sectionTitleTight}>معرض الأعمال</Text>
+              </View>
+              <Text style={styles.portfolioHint}>اسحب يميناً ويساراً لاستعراض الأعمال</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.portfolioStrip}
+                decelerationRate="fast"
+                snapToInterval={PORTFOLIO_CARD_W + 10}
+                snapToAlignment="start"
+              >
+                {detail.portfolio.map((uri, i) => (
+                  <Pressable
+                    key={`${uri}-${i}`}
+                    style={styles.portfolioCard}
+                    onPress={() => {
+                      setPortfolioIndex(i);
+                      setPortfolioGalleryOpen(true);
+                    }}
+                  >
+                    <Image source={{ uri }} style={styles.portfolioThumb} />
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </>
+          ) : null}
+
           {detail.showSpaces ? (
             <>
               <View style={styles.divider} />
               <Text style={styles.sectionTitle}>المساحات المتوفرة</Text>
               {detail.spaces.map((row) => (
-                <IconLine key={row.key} icon={row.icon} label={row.label} />
+                <IconLine
+                  key={row.key}
+                  icon={row.icon}
+                  label={row.label}
+                  hasPhotos={(row.images?.length ?? 0) > 0}
+                  onPress={
+                    row.images?.length
+                      ? () =>
+                          setDetailGallery({
+                            title: row.label,
+                            uris: row.images!,
+                            index: 0,
+                          })
+                      : undefined
+                  }
+                />
               ))}
             </>
           ) : null}
@@ -544,14 +737,14 @@ export function ProviderProfileScreen() {
                 <Ionicons name="location-sharp" size={14} color={DETAIL.muted} />
                 <Text style={styles.locText}>{addressLine || 'صنعاء'}</Text>
               </View>
-              <Pressable style={styles.mapCard} onPress={openMaps}>
+              <View style={styles.mapCard}>
                 <MapFallback
                   latitude={mapCoords.latitude}
                   longitude={mapCoords.longitude}
-                  height={160}
+                  height={180}
                   label="فتح الموقع على الخريطة"
                 />
-              </Pressable>
+              </View>
             </>
           ) : null}
 
@@ -633,12 +826,32 @@ export function ProviderProfileScreen() {
               }}
               style={styles.packagesSection}
             >
-              <Text style={styles.packagesHeading}>باقات الأسعار</Text>
+              <Text style={styles.packagesHeading}>
+                {facilityKind === 'car'
+                  ? 'السيارات'
+                  : facilityKind === 'transport'
+                    ? 'المركبات'
+                    : facilityKind === 'apparel'
+                      ? 'المنتجات'
+                      : 'باقات الأسعار'}
+              </Text>
               <Text style={styles.packagesSub}>
-                تختلف الأيام المتفرغة باختلاف الباقة.
+                {facilityKind === 'car' ||
+                facilityKind === 'transport' ||
+                facilityKind === 'apparel'
+                  ? 'اختر المنتج ثم حدد أيام الاستلام والإرجاع.'
+                  : facilityKind === 'gym'
+                    ? 'اختر باقة الاشتراك ثم حدد يوم البداية من التقويم.'
+                    : facilityKind === 'pool'
+                      ? 'اختر الباقة ثم حدد يوم الحجز من التقويم.'
+                      : 'تختلف الأيام المتفرغة باختلاف الباقة.'}
               </Text>
               <FlatList
-                data={detail.packages}
+                data={
+                  facilityKind === 'pool'
+                    ? detail.packages.filter((p) => p.pricingMode !== 'HOURLY')
+                    : detail.packages
+                }
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 keyExtractor={(p) => p.id}
@@ -723,6 +936,22 @@ export function ProviderProfileScreen() {
         initialIndex={imageIndex}
         onClose={() => setHeroGalleryOpen(false)}
       />
+
+      <ImageGalleryModal
+        visible={portfolioGalleryOpen && detail.portfolio.length > 0}
+        title="معرض الأعمال"
+        uris={detail.portfolio}
+        initialIndex={portfolioIndex}
+        onClose={() => setPortfolioGalleryOpen(false)}
+      />
+
+      <ImageGalleryModal
+        visible={!!detailGallery && detailGallery.uris.length > 0}
+        title={detailGallery?.title ?? ''}
+        uris={detailGallery?.uris ?? []}
+        initialIndex={detailGallery?.index ?? 0}
+        onClose={() => setDetailGallery(null)}
+      />
     </View>
   );
 }
@@ -743,42 +972,98 @@ function PackageCard({
   onPress: () => void;
 }) {
   const guestsLabel = capacityLabel ?? pkg.capacityLabel;
+  const includes = pkg.includes?.filter((s) => s.trim()) ?? [];
+  const hasIncludes = includes.length > 0;
+  const unitSuffix =
+    pkg.pricingMode === 'HOURLY'
+      ? ' / ساعة'
+      : pkg.membershipUnit === 'MONTHS'
+        ? pkg.membershipDuration === 1
+          ? ' / شهر'
+          : ` / ${pkg.membershipDuration} أشهر`
+        : pkg.membershipUnit === 'DAYS'
+          ? pkg.membershipDuration === 1
+            ? ' / يوم'
+            : ` / ${pkg.membershipDuration} يوم`
+          : pkg.period === 'PER_NIGHT'
+            ? ' / ليلة'
+            : pkg.pricingMode === 'DAILY' || pkg.priceUnit === 'day'
+              ? ' / يوم'
+              : '';
+
   return (
     <Pressable
-      style={[styles.packageCard, selected && styles.packageCardSelected]}
+      style={[
+        styles.packageCard,
+        hasIncludes && styles.packageCardWithIncludes,
+        selected && styles.packageCardSelected,
+      ]}
       onPress={onPress}
     >
-      <View style={styles.packageTop}>
+      <View style={[styles.packageTop, hasIncludes && styles.packageTopTight]}>
         <View style={styles.packagePriceRow}>
           <Text style={styles.packageAmount} numberOfLines={1}>
             {amountLabel}
           </Text>
           <Text style={styles.packageCurrency}>
             {currencyLabel}
-            {pkg.period === 'PER_NIGHT' ? ' / ليلة' : ''}
+            {unitSuffix}
           </Text>
         </View>
         <Text style={styles.packageTitle} numberOfLines={2}>
           {pkg.title}
         </Text>
-      </View>
-
-      <View style={styles.packageLine} />
-
-      <View style={styles.packageDetails}>
-        {guestsLabel ? (
-          <View style={styles.packageMeta}>
-            <Ionicons name="people-outline" size={20} color="#98A2B3" />
-            <Text style={styles.packageMetaText}>{guestsLabel}</Text>
-          </View>
-        ) : null}
-        {pkg.timeLabel ? (
-          <View style={styles.packageMeta}>
-            <Ionicons name="time-outline" size={20} color="#98A2B3" />
-            <Text style={styles.packageMetaText}>{pkg.timeLabel}</Text>
-          </View>
+        {pkg.detail ? (
+          <Text style={styles.packageDetail} numberOfLines={3}>
+            {pkg.detail}
+          </Text>
         ) : null}
       </View>
+
+      {hasIncludes ? (
+        <>
+          <View style={styles.packageLine} />
+          <View style={styles.packageIncludes}>
+            {includes.slice(0, 6).map((item, index) => (
+              <View key={`inc-${index}-${item}`} style={styles.packageIncludeRow}>
+                <Ionicons
+                  name="checkmark-circle"
+                  size={15}
+                  color={DETAIL.navy}
+                />
+                <Text style={styles.packageIncludeText} numberOfLines={2}>
+                  {item}
+                </Text>
+              </View>
+            ))}
+            {includes.length > 6 ? (
+              <Text style={styles.packageIncludeMore}>
+                +{includes.length - 6} المزيد
+              </Text>
+            ) : null}
+          </View>
+        </>
+      ) : null}
+
+      {guestsLabel || pkg.timeLabel ? (
+        <>
+          <View style={styles.packageLine} />
+          <View style={styles.packageDetails}>
+            {guestsLabel ? (
+              <View style={styles.packageMeta}>
+                <Ionicons name="people-outline" size={20} color="#98A2B3" />
+                <Text style={styles.packageMetaText}>{guestsLabel}</Text>
+              </View>
+            ) : null}
+            {pkg.timeLabel ? (
+              <View style={styles.packageMeta}>
+                <Ionicons name="time-outline" size={20} color="#98A2B3" />
+                <Text style={styles.packageMetaText}>{pkg.timeLabel}</Text>
+              </View>
+            ) : null}
+          </View>
+        </>
+      ) : null}
     </Pressable>
   );
 }
@@ -897,6 +1182,21 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: 12,
     backgroundColor: DETAIL.chipBg,
+    position: 'relative',
+  },
+  chipTappable: {
+    borderColor: DETAIL.navy,
+  },
+  chipPhotoBadge: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#EEF3FA',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   chipLabel: {
     fontSize: 12,
@@ -922,6 +1222,60 @@ const styles = StyleSheet.create({
     width: '100%',
     textAlign: 'right',
     writingDirection: 'rtl',
+  },
+  portfolioHeader: {
+    // Keep physical left/right even when the app is RTL.
+    direction: 'ltr',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+    gap: 12,
+    width: '100%',
+  },
+  sectionTitleTight: {
+    flexShrink: 1,
+    fontSize: 17,
+    fontWeight: '800',
+    color: DETAIL.text,
+    textAlign: 'right',
+    writingDirection: 'rtl',
+  },
+  portfolioShowAll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 2,
+  },
+  portfolioShowAllText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: DETAIL.navy,
+  },
+  portfolioHint: {
+    fontSize: 13,
+    color: DETAIL.muted,
+    marginBottom: 12,
+    width: '100%',
+    textAlign: 'right',
+    writingDirection: 'rtl',
+  },
+  portfolioStrip: {
+    paddingVertical: 2,
+    gap: 10,
+    flexDirection: 'row',
+  },
+  portfolioCard: {
+    width: PORTFOLIO_CARD_W,
+    height: PORTFOLIO_CARD_W * 0.72,
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: '#EEF1F6',
+  },
+  portfolioThumb: {
+    width: '100%',
+    height: '100%',
   },
   body: {
     fontSize: 14,
@@ -1091,6 +1445,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 5 },
     elevation: 3,
   },
+  packageCardWithIncludes: {
+    paddingBottom: 18,
+  },
   packageCardSelected: {
     borderWidth: 1.5,
     borderColor: DETAIL.navy,
@@ -1100,12 +1457,17 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 16,
   },
+  packageTopTight: {
+    marginBottom: 12,
+  },
   packagePriceRow: {
+    // Under forceRTL, flex-start = physical RIGHT
     flexDirection: 'row',
     alignItems: 'baseline',
     flexWrap: 'wrap',
     justifyContent: 'flex-start',
     gap: 8,
+    width: '100%',
   },
   packageAmount: {
     fontSize: 28,
@@ -1119,17 +1481,59 @@ const styles = StyleSheet.create({
     color: DETAIL.text,
   },
   packageTitle: {
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '700',
+    color: DETAIL.text,
+    width: '100%',
+    textAlign: 'right',
+    writingDirection: 'rtl',
+  },
+  packageDetail: {
+    marginTop: 2,
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '500',
     color: DETAIL.muted,
     width: '100%',
     textAlign: 'right',
     writingDirection: 'rtl',
   },
+  packageIncludes: {
+    gap: 8,
+    width: '100%',
+    // Under forceRTL, flex-start = physical RIGHT
+    alignItems: 'flex-start',
+  },
+  packageIncludeRow: {
+    // Under forceRTL: first child (icon) sits on the physical right
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    gap: 8,
+    width: '100%',
+  },
+  packageIncludeText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '500',
+    color: DETAIL.text,
+    textAlign: 'right',
+    writingDirection: 'rtl',
+  },
+  packageIncludeMore: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: DETAIL.navy,
+    width: '100%',
+    textAlign: 'right',
+    writingDirection: 'rtl',
+    marginTop: 2,
+  },
   packageLine: {
     height: 1,
     backgroundColor: '#EEF1F5',
-    marginBottom: 16,
+    marginBottom: 14,
   },
   packageDetails: {
     gap: 12,

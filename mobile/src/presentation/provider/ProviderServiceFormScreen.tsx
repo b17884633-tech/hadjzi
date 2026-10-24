@@ -11,6 +11,8 @@ import { AppText as Text } from '@/core/ui/components/AppText';
 import { BackButton } from '@/core/ui/components/BackButton';
 import { KeyboardAwareScrollView } from '@/core/ui/components/KeyboardAwareScrollView';
 import { QuantityStepper } from '@/core/ui/components/QuantityStepper';
+import { SmoothBottomSheet } from '@/core/ui/components/SmoothBottomSheet';
+import { Ionicons } from '@expo/vector-icons';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { DEPOSIT_PERCENTAGE } from '../../core/common/bookingConstants';
@@ -27,15 +29,28 @@ import {
   type PricePeriod,
 } from '../../core/common/pricePeriods';
 import { theme } from '../../core/ui/theme';
+import { categoryAncestorNames } from '../../data/mappers/homeMappers';
 import { useApp } from '../../di/AppProvider';
 import { RootStackParamList } from '../navigation/types';
 import { CloudinaryImagePicker } from './CloudinaryImagePicker';
-import { resolveFacilityKind } from './categoryKinds';
+import { DynamicLineList } from './DynamicLineList';
+import { OptionPickerSheet } from './OptionPickerSheet';
+import {
+  isSalonCategory,
+  resolveFacilityKind,
+  SERVICE_FACILITY_DEFAULTS,
+} from './categoryKinds';
+
+function cleanAmenityList(items: string[]): string[] {
+  return items.map((s) => s.trim()).filter(Boolean);
+}
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ProviderServiceForm'>;
 
 /** Open this many nights ahead so stay calendars are bookable on create. */
 const SEED_DAYS = 90;
+/** Default barber/salon slot length for the booking calendar (not shown in the form). */
+const DEFAULT_SALON_SLOT_MINUTES = 30;
 
 const PRICE_FIELDS: { code: CurrencyCode; label: string; placeholder: string }[] = [
   { code: 'NEW_YER', label: 'ريال يمني جديد', placeholder: '0' },
@@ -45,6 +60,37 @@ const PRICE_FIELDS: { code: CurrencyCode; label: string; placeholder: string }[]
 ];
 
 type PackagePeriod = 'MORNING' | 'EVENING' | 'PER_NIGHT';
+type TairamanPricingMode = 'FIXED' | 'HOURLY';
+type PoolPricingMode = 'FIXED' | 'HOURLY';
+type MembershipUnit = 'DAYS' | 'MONTHS';
+
+const TAIRAMAN_PRICING_OPTIONS: {
+  id: TairamanPricingMode;
+  label: string;
+}[] = [
+  { id: 'FIXED', label: 'باقة يوم (سعر ثابت)' },
+  { id: 'HOURLY', label: 'حجز بالساعة' },
+];
+
+const POOL_PRICING_OPTIONS: {
+  id: PoolPricingMode;
+  label: string;
+}[] = [
+  { id: 'FIXED', label: 'باقة يوم كامل' },
+  { id: 'HOURLY', label: 'حجز بالساعة' },
+];
+
+const MEMBERSHIP_UNIT_OPTIONS: { id: MembershipUnit; label: string }[] = [
+  { id: 'DAYS', label: 'بالأيام' },
+  { id: 'MONTHS', label: 'بالأشهر' },
+];
+
+const MEMBERSHIP_DAY_PRESETS = [7, 15, 30, 60, 90];
+const MEMBERSHIP_MONTH_PRESETS = [1, 2, 3, 6, 12];
+
+function parseMembershipUnit(raw: unknown): MembershipUnit {
+  return raw === 'MONTHS' ? 'MONTHS' : 'DAYS';
+}
 
 const PERIOD_OPTIONS: { id: PackagePeriod; label: string }[] = [
   { id: 'MORNING', label: 'صباحية' },
@@ -112,11 +158,19 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
   const [isHall, setIsHall] = useState(false);
   const [isSport, setIsSport] = useState(false);
   const [isPool, setIsPool] = useState(false);
+  const [isGym, setIsGym] = useState(false);
   const [isHealth, setIsHealth] = useState(false);
   const [isSalon, setIsSalon] = useState(false);
   const [isCar, setIsCar] = useState(false);
+  const [isTransport, setIsTransport] = useState(false);
+  const [isApparel, setIsApparel] = useState(false);
   const [isArtist, setIsArtist] = useState(false);
   const [isPhoto, setIsPhoto] = useState(false);
+  const [apparelSize, setApparelSize] = useState('');
+  const [apparelColor, setApparelColor] = useState('');
+  const [productAmenities, setProductAmenities] = useState<string[]>([]);
+  /** Barber/salon package: what the package includes (add/delete lines). */
+  const [packageIncludes, setPackageIncludes] = useState<string[]>([]);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [basePrice, setBasePrice] = useState('');
@@ -127,6 +181,11 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
   const [slotMinutes, setSlotMinutes] = useState<number | undefined>(30);
   const [seats, setSeats] = useState<number | undefined>(5);
   const [carYear, setCarYear] = useState('');
+  const [carBrand, setCarBrand] = useState('');
+  const [carBrands, setCarBrands] = useState<string[]>([]);
+  const [brandPickerOpen, setBrandPickerOpen] = useState(false);
+  const [newBrandDraft, setNewBrandDraft] = useState('');
+  const [addingBrand, setAddingBrand] = useState(false);
   const [transmission, setTransmission] = useState<'AUTO' | 'MANUAL'>('AUTO');
   const [period, setPeriod] = useState<PackagePeriod>('PER_NIGHT');
   const [fromTime, setFromTime] = useState(DEFAULT_PERIOD_TIMES.MORNING.from);
@@ -134,6 +193,16 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
   const [pricePeriods, setPricePeriods] = useState<PricePeriod[]>(
     defaultSportPricePeriods(5000),
   );
+  /** طيرمان: fixed day package vs hourly (price × hours). */
+  const [tairamanPricingMode, setTairamanPricingMode] =
+    useState<TairamanPricingMode>('FIXED');
+  /** مسبح: full-day exclusive package vs hourly periods. */
+  const [poolPricingMode, setPoolPricingMode] =
+    useState<PoolPricingMode>('FIXED');
+  /** نادي رياضي: اشتراك بالأيام أو الأشهر. */
+  const [membershipUnit, setMembershipUnit] =
+    useState<MembershipUnit>('MONTHS');
+  const [membershipDuration, setMembershipDuration] = useState(1);
   const [images, setImages] = useState<string[]>([]);
   const [inventory, setInventory] = useState(1);
   const [error, setError] = useState<string | null>(null);
@@ -145,19 +214,33 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
 
   const load = useCallback(async () => {
     try {
-      const facility = await container.providerApi.getMineById(providerId);
-      const catName =
-        facility.categoryName ?? facility.category?.name ?? undefined;
-      const kind = resolveFacilityKind(catName, facility.category?.name);
+      const [facility, treeRes] = await Promise.all([
+        container.providerApi.getMineById(providerId),
+        container.categoryApi.tree(),
+      ]);
+      const treeData = treeRes.data.data ?? [];
+      const categoryId = facility.categoryId ?? facility.category?.id ?? null;
+      const ancestorNames = categoryAncestorNames(treeData, categoryId);
+      const kind = resolveFacilityKind(
+        facility.category?.name,
+        ...ancestorNames,
+      );
       const hotel = kind === 'hotel';
       const tairaman = kind === 'tairaman';
       const chalet = kind === 'chalet' || tairaman;
       const hall = kind === 'hall';
       const sport = kind === 'sport';
       const pool = kind === 'pool';
+      const gym = kind === 'gym';
       const health = kind === 'health';
-      const salon = kind === 'salon';
+      // Force salon when leaf/ancestors match (e.g. «قسم الرجال» under «كوافير»).
+      const salon =
+        kind === 'salon' ||
+        isSalonCategory(facility.category?.name) ||
+        ancestorNames.some(isSalonCategory);
       const car = kind === 'car';
+      const transport = kind === 'transport';
+      const apparel = kind === 'apparel';
       const artist = kind === 'artist';
       const photo = kind === 'photo';
       setIsHotel(hotel);
@@ -166,9 +249,12 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
       setIsHall(hall);
       setIsSport(sport);
       setIsPool(pool);
+      setIsGym(gym);
       setIsHealth(health);
       setIsSalon(salon);
       setIsCar(car);
+      setIsTransport(transport);
+      setIsApparel(apparel);
       setIsArtist(artist);
       setIsPhoto(photo);
       setFacilityBusinessName(facility.businessName?.trim() || '');
@@ -192,7 +278,7 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         const svc = list.find((s) => s.id === serviceId);
         if (!svc) {
           setError(
-            chalet || hall || artist
+            chalet || hall || artist || photo
               ? 'الباقة غير موجودة'
               : hotel
                 ? 'الغرفة غير موجودة'
@@ -207,7 +293,7 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         setBasePrice(String(svc.basePrice ?? ''));
         setImages(svc.images ?? []);
         const a = svc.attributes ?? {};
-        if ((!chalet || tairaman) && !sport && !pool) {
+        if ((!chalet || tairaman) && !sport && !pool && !gym) {
           setCapacity(toOptionalNum(a.capacity) ?? toOptionalNum(a.guests));
           if (hotel) {
             setMaxChildren(
@@ -224,7 +310,7 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
             );
           }
         }
-        if (health || salon || photo) {
+        if (health) {
           setSlotMinutes(
             toOptionalNum(a.slotMinutes) ??
               toOptionalNum(a.durationMinutes) ??
@@ -232,11 +318,55 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
               30,
           );
         }
-        if (car) {
+        if (salon) {
+          const inc = Array.isArray(a.includes)
+            ? (a.includes as unknown[])
+                .filter((x): x is string => typeof x === 'string')
+                .map((x) => x.trim())
+                .filter(Boolean)
+            : [];
+          setPackageIncludes(inc.length ? inc : ['']);
+        }
+        if (car || transport || apparel) {
+          const am = Array.isArray(a.amenities)
+            ? (a.amenities as unknown[])
+                .filter((x): x is string => typeof x === 'string')
+                .map((x) => x.trim())
+                .filter(Boolean)
+            : [];
+          setProductAmenities(
+            am.length
+              ? am
+              : car
+                ? [...SERVICE_FACILITY_DEFAULTS.car.amenities]
+                : transport
+                  ? [...SERVICE_FACILITY_DEFAULTS.transport.amenities]
+                  : [...SERVICE_FACILITY_DEFAULTS.apparel.amenities],
+          );
+        }
+        if (car || transport) {
           setSeats(toOptionalNum(a.seats) ?? 5);
           const y = toOptionalNum(a.year);
           setCarYear(y != null ? String(y) : '');
           setTransmission(a.transmission === 'MANUAL' ? 'MANUAL' : 'AUTO');
+        }
+        if (car) {
+          const brand =
+            typeof a.brand === 'string' ? a.brand.trim() : '';
+          setCarBrand(brand);
+        }
+        if (apparel) {
+          setApparelSize(
+            typeof a.size === 'string' ? a.size : String(a.size ?? ''),
+          );
+          setApparelColor(
+            typeof a.color === 'string' ? a.color : String(a.color ?? ''),
+          );
+          const units =
+            toOptionalNum(a.inventory) ??
+            toOptionalNum(a.units) ??
+            (svc.availabilities?.[0]?.totalCapacity ?? 1);
+          setInventory(units && units > 0 ? units : 1);
         }
         if (tairaman) {
           const units =
@@ -244,19 +374,46 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
             toOptionalNum(a.units) ??
             (svc.availabilities?.[0]?.totalCapacity ?? 1);
           setInventory(units && units > 0 ? units : 1);
+          const savedPeriods = parsePricePeriods(a.pricePeriods);
+          const hourly =
+            a.pricingMode === 'HOURLY' ||
+            (savedPeriods.length > 0 && a.pricingMode !== 'FIXED');
+          setTairamanPricingMode(hourly ? 'HOURLY' : 'FIXED');
+          if (hourly && savedPeriods.length) {
+            setPricePeriods(savedPeriods);
+          }
         }
         const storedPeriod = parseStoredPeriod(a);
         setPeriod(storedPeriod);
         if (tairaman || hall || artist) {
+          const periodFrom =
+            Array.isArray(a.pricePeriods) &&
+            a.pricePeriods[0] &&
+            typeof (a.pricePeriods[0] as { fromTime?: unknown }).fromTime ===
+              'string'
+              ? String(
+                  (a.pricePeriods[0] as { fromTime: string }).fromTime,
+                ).slice(0, 5)
+              : undefined;
+          const periodTo =
+            Array.isArray(a.pricePeriods) &&
+            a.pricePeriods[0] &&
+            typeof (a.pricePeriods[0] as { toTime?: unknown }).toTime ===
+              'string'
+              ? String((a.pricePeriods[0] as { toTime: string }).toTime).slice(
+                  0,
+                  5,
+                )
+              : undefined;
           setFromTime(
             typeof a.fromTime === 'string' && a.fromTime.trim()
               ? String(a.fromTime).slice(0, 5)
-              : '10:00',
+              : periodFrom ?? '10:00',
           );
           setToTime(
             typeof a.toTime === 'string' && a.toTime.trim()
               ? String(a.toTime).slice(0, 5)
-              : '21:00',
+              : periodTo ?? '21:00',
           );
         } else if (storedPeriod === 'MORNING' || storedPeriod === 'EVENING') {
           const defaults = DEFAULT_PERIOD_TIMES[storedPeriod];
@@ -283,7 +440,25 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
           setInventory(facilityUnits > 0 ? facilityUnits : 1);
         }
 
-        if (sport || pool) {
+        if (pool) {
+          const savedPeriods = parsePricePeriods(a.pricePeriods);
+          const hourly =
+            a.pricingMode === 'HOURLY' ||
+            (savedPeriods.length > 0 && a.pricingMode !== 'FIXED');
+          setPoolPricingMode(hourly ? 'HOURLY' : 'FIXED');
+          if (hourly) {
+            setPricePeriods(
+              savedPeriods.length
+                ? savedPeriods
+                : defaultSportPricePeriods(Number(svc.basePrice) || 5000),
+            );
+          }
+        } else if (gym) {
+          setMembershipUnit(parseMembershipUnit(a.membershipUnit));
+          setMembershipDuration(
+            Math.max(1, Math.floor(toOptionalNum(a.membershipDuration) ?? 1)),
+          );
+        } else if (sport) {
           const savedPeriods = parsePricePeriods(a.pricePeriods);
           setPricePeriods(
             savedPeriods.length
@@ -299,7 +474,14 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
           SAR: saved.SAR != null ? String(saved.SAR) : '',
           USD: saved.USD != null ? String(saved.USD) : '',
         });
-      } else if (sport || pool) {
+      } else if (pool) {
+        setPoolPricingMode('FIXED');
+        setName('');
+      } else if (gym) {
+        setMembershipUnit('MONTHS');
+        setMembershipDuration(1);
+        setName('');
+      } else if (sport) {
         setPricePeriods(defaultSportPricePeriods(5000));
         setName(facility.businessName?.trim() || 'باقة أسعار');
       } else if (hall || artist || tairaman) {
@@ -311,11 +493,23 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         }
       } else if (hotel) {
         setMaxChildren(0);
-      } else if (health || salon || photo) {
+      } else if (health) {
         setSlotMinutes(30);
-      } else if (car) {
+      } else if (salon) {
+        setPackageIncludes(['']);
+      } else if (photo) {
+        // day package — no duration
+      } else if (car || transport) {
         setSeats(5);
         setInventory(1);
+        setProductAmenities(
+          car
+            ? [...SERVICE_FACILITY_DEFAULTS.car.amenities]
+            : [...SERVICE_FACILITY_DEFAULTS.transport.amenities],
+        );
+      } else if (apparel) {
+        setInventory(1);
+        setProductAmenities([...SERVICE_FACILITY_DEFAULTS.apparel.amenities]);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'تعذر التحميل');
@@ -327,6 +521,23 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!isCar) return;
+    let cancelled = false;
+    void container.serviceApi
+      .listCarBrands()
+      .then((list) => {
+        if (cancelled) return;
+        setCarBrands(list.map((b) => b.name).filter(Boolean));
+      })
+      .catch(() => {
+        if (!cancelled) setCarBrands([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [container.serviceApi, isCar]);
 
   const setPriceField = (code: CurrencyCode, value: string) => {
     setPrices((prev) => ({ ...prev, [code]: value }));
@@ -341,30 +552,69 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
     }
   };
 
-  const isHourlyPeriods = isSport || isPool;
+  const isPoolDayPackage = isPool && poolPricingMode === 'FIXED';
+  const isPoolHourly = isPool && poolPricingMode === 'HOURLY';
+  const isHourlyPeriods = isSport || isPoolHourly;
+  const isTairamanHourly = isTairaman && tairamanPricingMode === 'HOURLY';
   const isEventPackage = isHall || isArtist;
-  const isAppointment = isHealth || isSalon || isPhoto;
-  const useMultiCurrency = isHotel || isChalet || isHall || isArtist || isCar;
+  /** Photographers: day packages with name + detail + prices only. */
+  const isPhotoPackage = isPhoto;
+  /** Gym / sport club membership — client picks start day; end is computed. */
+  const isGymMembership = isGym;
+  /** Full-day exclusive pool rental — client picks one calendar day. */
+  const isDayExclusivePackage = isPhotoPackage || isPoolDayPackage;
+  /** Health appointments still need a duration for the slot calendar. */
+  const isHealthAppointment = isHealth;
+  /** Barber/salon packages: name, price, includes — no duration field. */
+  const isSalonPackage = isSalon;
+  const isAppointment = isHealthAppointment || isSalonPackage;
+  // Salon packages never show the duration stepper (hidden default for calendar only).
+  const isCatalogItem = isCar || isTransport || isApparel;
+  const useMultiCurrency =
+    isHotel ||
+    isChalet ||
+    isHall ||
+    isArtist ||
+    isCatalogItem ||
+    isDayExclusivePackage ||
+    isGymMembership ||
+    isSalonPackage;
   const entityLabel = isHotel
     ? 'الغرفة'
-    : isChalet || isEventPackage
+    : isChalet ||
+        isEventPackage ||
+        isDayExclusivePackage ||
+        isGymMembership ||
+        isSalonPackage
       ? 'الباقة'
       : isHourlyPeriods
         ? 'فترات الأسعار'
-        : isCar
-          ? 'السيارة'
-          : isAppointment
-            ? 'الخدمة'
-            : 'الخدمة';
+        : isApparel
+          ? 'المنتج'
+          : isTransport
+            ? 'المركبة'
+            : isCar
+              ? 'السيارة'
+              : isAppointment
+                ? 'الخدمة'
+                : 'الخدمة';
   const entityLabelIndef = isHotel
     ? 'غرفة'
-    : isChalet || isEventPackage
+    : isChalet ||
+        isEventPackage ||
+        isDayExclusivePackage ||
+        isGymMembership ||
+        isSalonPackage
       ? 'باقة'
       : isHourlyPeriods
         ? 'فترات الأسعار'
-        : isCar
-          ? 'سيارة'
-          : 'خدمة';
+        : isApparel
+          ? 'منتج'
+          : isTransport
+            ? 'مركبة'
+            : isCar
+              ? 'سيارة'
+              : 'خدمة';
 
   const updatePeriod = (id: string, patch: Partial<PricePeriod>) => {
     setPricePeriods((prev) =>
@@ -465,26 +715,49 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
       (isEventPackage || isTairaman) &&
       (!isValidTime(fromTime) || !isValidTime(toTime))
     ) {
-      setError('أدخل وقت البداية والنهاية بصيغة ساعة:دقيقة (مثال 10:00)');
+      setError(
+        isTairamanHourly
+          ? 'أدخل ساعات العمل المتاحة للحجز (من–إلى)'
+          : 'أدخل وقت البداية والنهاية بصيغة ساعة:دقيقة (مثال 10:00)',
+      );
       return;
     }
     if ((isHall || isTairaman) && (capacity == null || capacity < 1)) {
       setError('أدخل سعة الباقة (عدد الأشخاص)');
       return;
     }
-    if (isTairaman && (!inventory || inventory < 1)) {
-      setError('أدخل عدد الطيرمانات المتاحة لهذه الباقة');
-      return;
-    }
-    if (
-      isAppointment &&
-      (slotMinutes == null || slotMinutes < 5)
-    ) {
+    if (isHealthAppointment && (slotMinutes == null || slotMinutes < 5)) {
       setError('أدخل مدة الخدمة بالدقائق (5 على الأقل)');
       return;
     }
-    if (isCar && (seats == null || seats < 1)) {
+    if (
+      isSalonPackage &&
+      cleanAmenityList(packageIncludes).length === 0
+    ) {
+      setError('أضف ما تشمله الباقة (سطر واحد على الأقل)');
+      return;
+    }
+    if ((isCar || isTransport) && (seats == null || seats < 1)) {
       setError('أدخل عدد المقاعد');
+      return;
+    }
+    if (isCar && !carBrand.trim()) {
+      setError('اختر ماركة السيارة أو أضف ماركة جديدة');
+      return;
+    }
+    if (isApparel && !apparelSize.trim()) {
+      setError('أدخل المقاس');
+      return;
+    }
+    if (
+      isGymMembership &&
+      (!Number.isFinite(membershipDuration) || membershipDuration < 1)
+    ) {
+      setError(
+        membershipUnit === 'MONTHS'
+          ? 'أدخل مدة الاشتراك بالأشهر (شهر واحد على الأقل)'
+          : 'أدخل مدة الاشتراك بالأيام (يوم واحد على الأقل)',
+      );
       return;
     }
 
@@ -501,9 +774,27 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         attributes.guests = guests;
         attributes.maxGuests = guests;
         delete attributes.period;
-        const units = Math.max(1, Math.floor(Number(inventory)));
-        attributes.inventory = units;
-        attributes.units = units;
+        // Unit count lives on the facility — mirror for calendar seed only.
+        attributes.inventory = facilityInventory;
+        attributes.units = facilityInventory;
+        if (isTairamanHourly) {
+          attributes.pricingMode = 'HOURLY';
+          attributes.pricePerHour = newYerPrice;
+          // Single operating window so backend/client reuse sports hourly pricing.
+          attributes.pricePeriods = [
+            {
+              id: 'hourly',
+              label: 'حجز بالساعة',
+              fromTime: fromTime.trim().slice(0, 5),
+              toTime: toTime.trim().slice(0, 5),
+              pricePerHour: newYerPrice,
+            },
+          ];
+        } else {
+          attributes.pricingMode = 'FIXED';
+          delete attributes.pricePerHour;
+          delete attributes.pricePeriods;
+        }
       } else if (isChalet) {
         attributes.period = period;
         if (period === 'MORNING' || period === 'EVENING') {
@@ -530,6 +821,7 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         attributes.units = 1;
       } else if (isHourlyPeriods) {
         attributes.pricePeriods = cleanedPeriods;
+        attributes.pricingMode = 'HOURLY';
         // Players / dimensions live on the facility — mirror for booking UI only.
         if (facilityMaxPlayers != null && facilityMaxPlayers > 0) {
           attributes.capacity = facilityMaxPlayers;
@@ -538,19 +830,74 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
           attributes.maxPlayers = facilityMaxPlayers;
           attributes.maxGuests = facilityMaxPlayers;
         }
-      } else if (isAppointment) {
+      } else if (isHealthAppointment) {
         const mins = Math.max(5, Math.floor(Number(slotMinutes)));
         attributes.slotMinutes = mins;
         attributes.durationMinutes = mins;
-      } else if (isCar) {
+      } else if (isSalonPackage) {
+        const includes = cleanAmenityList(packageIncludes);
+        attributes.includes = includes;
+        // Hidden default for calendar slots — not shown on the package card.
+        attributes.slotMinutes = DEFAULT_SALON_SLOT_MINUTES;
+        attributes.durationMinutes = DEFAULT_SALON_SLOT_MINUTES;
+      } else if (isDayExclusivePackage) {
+        // Full-day booking — client picks one calendar day.
+        attributes.pricingMode = 'FIXED';
+        attributes.inventory = 1;
+        attributes.units = 1;
+        if (isPoolDayPackage && facilityMaxPlayers != null && facilityMaxPlayers > 0) {
+          attributes.capacity = facilityMaxPlayers;
+          attributes.guests = facilityMaxPlayers;
+          attributes.maxGuests = facilityMaxPlayers;
+          attributes.maxPlayers = facilityMaxPlayers;
+        }
+        delete attributes.slotMinutes;
+        delete attributes.durationMinutes;
+        delete attributes.fromTime;
+        delete attributes.toTime;
+        delete attributes.pricePeriods;
+        delete attributes.membershipUnit;
+        delete attributes.membershipDuration;
+      } else if (isGymMembership) {
+        const duration = Math.max(1, Math.floor(Number(membershipDuration) || 1));
+        attributes.pricingMode = 'FIXED';
+        attributes.membershipUnit = membershipUnit;
+        attributes.membershipDuration = duration;
+        attributes.inventory = 1;
+        attributes.units = 1;
+        delete attributes.slotMinutes;
+        delete attributes.durationMinutes;
+        delete attributes.fromTime;
+        delete attributes.toTime;
+        delete attributes.pricePeriods;
+      } else if (isCar || isTransport) {
         const seatCount = Math.max(1, Math.floor(Number(seats)));
         attributes.seats = seatCount;
         attributes.transmission = transmission;
         const year = toOptionalNum(carYear);
         if (year != null) attributes.year = year;
         else delete attributes.year;
+        if (isCar) {
+          const brand = carBrand.trim().replace(/\s+/g, ' ');
+          attributes.brand = brand;
+          await container.serviceApi.ensureCarBrand(brand).catch(() => null);
+        }
         attributes.inventory = Math.max(1, Math.floor(Number(inventory)));
         attributes.units = attributes.inventory;
+        attributes.pricingMode = 'DAILY';
+        const am = cleanAmenityList(productAmenities);
+        if (am.length) attributes.amenities = am;
+        else delete attributes.amenities;
+      } else if (isApparel) {
+        attributes.size = apparelSize.trim();
+        if (apparelColor.trim()) attributes.color = apparelColor.trim();
+        else delete attributes.color;
+        attributes.inventory = Math.max(1, Math.floor(Number(inventory)));
+        attributes.units = attributes.inventory;
+        attributes.pricingMode = 'DAILY';
+        const am = cleanAmenityList(productAmenities);
+        if (am.length) attributes.amenities = am;
+        else delete attributes.amenities;
       } else {
         if (capacity != null && capacity > 0) {
           attributes.capacity = capacity;
@@ -584,13 +931,18 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         description: isHourlyPeriods ? undefined : description.trim() || undefined,
         basePrice: newYerPrice,
         depositPercentage: DEPOSIT_PERCENTAGE,
-        images: isHourlyPeriods ? [] : images,
+        images:
+          isHourlyPeriods || isDayExclusivePackage || isGymMembership
+            ? []
+            : images,
         attributes,
-        ...(isAppointment
+        ...(isHealthAppointment
           ? {
               durationMinutes: Math.max(5, Math.floor(Number(slotMinutes))),
             }
-          : {}),
+          : isSalonPackage
+            ? { durationMinutes: DEFAULT_SALON_SLOT_MINUTES }
+            : {}),
       };
 
       let id = serviceId;
@@ -613,6 +965,24 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
           endHour: (hours[hours.length - 1] ?? 21) + 1,
           totalCapacity: 1,
         });
+      } else if (id && isTairamanHourly) {
+        const band: PricePeriod[] = [
+          {
+            id: 'hourly',
+            label: 'حجز بالساعة',
+            fromTime: fromTime.trim().slice(0, 5),
+            toTime: toTime.trim().slice(0, 5),
+            pricePerHour: newYerPrice,
+          },
+        ];
+        const hours = hoursCoveredByPeriods(band);
+        await container.serviceApi.seedHourlyAvailabilities(id, {
+          days: 14,
+          hours: hours.length ? hours : undefined,
+          startHour: hours[0] ?? 8,
+          endHour: (hours[hours.length - 1] ?? 21) + 1,
+          totalCapacity: Math.max(1, facilityInventory),
+        });
       } else if (id && isAppointment) {
         await container.serviceApi.seedHourlyAvailabilities(id, {
           days: 14,
@@ -622,15 +992,19 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         });
       } else if (
         id &&
-        (isHotel || isChalet || isEventPackage || isCar || !isEdit)
+        (isHotel ||
+          isChalet ||
+          isEventPackage ||
+          isDayExclusivePackage ||
+          isGymMembership ||
+          isCatalogItem ||
+          !isEdit)
       ) {
-        const seedCap = isTairaman
-          ? Math.max(1, Math.floor(Number(inventory)))
-          : isChalet
-            ? Math.max(1, facilityInventory)
-            : isEventPackage
-              ? 1
-              : Math.max(1, inventory);
+        const seedCap = isTairaman || isChalet
+          ? Math.max(1, facilityInventory)
+          : isEventPackage || isDayExclusivePackage || isGymMembership
+            ? 1
+            : Math.max(1, inventory);
         await container.serviceApi.seedAvailabilities(id, {
           days: SEED_DAYS,
           totalCapacity: seedCap,
@@ -669,7 +1043,131 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         contentContainerStyle={styles.scroll}
         bottomOffset={72}
       >
-        {!isHourlyPeriods ? (
+        {isPool ? (
+          <View style={styles.card}>
+            <Text style={styles.label}>نوع الحجز</Text>
+            <View style={styles.periodRow}>
+              {POOL_PRICING_OPTIONS.map((opt) => {
+                const selected = poolPricingMode === opt.id;
+                return (
+                  <Pressable
+                    key={opt.id}
+                    style={[styles.periodChip, selected && styles.periodChipOn]}
+                    onPress={() => setPoolPricingMode(opt.id)}
+                  >
+                    <Text
+                      style={[
+                        styles.periodChipText,
+                        selected && styles.periodChipTextOn,
+                      ]}
+                    >
+                      {opt.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Text style={styles.meta}>
+              {isPoolDayPackage
+                ? 'باقة يوم كامل: العميل يحجز المسبح ليوم واحد من التقويم.'
+                : 'حجز بالساعة: حدّد فترات اليوم وسعر الساعة — العميل يختار الوقت والمدة.'}
+            </Text>
+          </View>
+        ) : null}
+
+        {isSalonPackage ? (
+          <View style={styles.card}>
+            <DynamicLineList
+              label="ما تشمله الباقة"
+              hint="أضف سطراً لكل خدمة مشمولة — يظهر للعميل على بطاقة الباقة. مثال: قص شعر، تشذيب لحية، غسيل وتسريح"
+              items={packageIncludes.length ? packageIncludes : ['']}
+              onChange={setPackageIncludes}
+              placeholder="ما يشمله…"
+              addLabel="إضافة"
+            />
+          </View>
+        ) : null}
+
+        {isGymMembership ? (
+          <View style={styles.card}>
+            <Text style={styles.label}>نوع الاشتراك</Text>
+            <View style={styles.periodRow}>
+              {MEMBERSHIP_UNIT_OPTIONS.map((opt) => {
+                const selected = membershipUnit === opt.id;
+                return (
+                  <Pressable
+                    key={opt.id}
+                    style={[styles.periodChip, selected && styles.periodChipOn]}
+                    onPress={() => {
+                      setMembershipUnit(opt.id);
+                      setMembershipDuration(opt.id === 'MONTHS' ? 1 : 30);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.periodChipText,
+                        selected && styles.periodChipTextOn,
+                      ]}
+                    >
+                      {opt.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Text style={[styles.label, { marginTop: 12 }]}>
+              {membershipUnit === 'MONTHS' ? 'عدد الأشهر' : 'عدد الأيام'}
+            </Text>
+            <View style={styles.periodRow}>
+              {(membershipUnit === 'MONTHS'
+                ? MEMBERSHIP_MONTH_PRESETS
+                : MEMBERSHIP_DAY_PRESETS
+              ).map((n) => {
+                const selected = membershipDuration === n;
+                return (
+                  <Pressable
+                    key={n}
+                    style={[styles.periodChip, selected && styles.periodChipOn]}
+                    onPress={() => setMembershipDuration(n)}
+                  >
+                    <Text
+                      style={[
+                        styles.periodChipText,
+                        selected && styles.periodChipTextOn,
+                      ]}
+                    >
+                      {membershipUnit === 'MONTHS'
+                        ? n === 1
+                          ? 'شهر'
+                          : `${n} أشهر`
+                        : `${n} يوم`}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <View style={{ marginTop: 8 }}>
+              <QuantityStepper
+                label={
+                  membershipUnit === 'MONTHS'
+                    ? 'مدة مخصصة (أشهر)'
+                    : 'مدة مخصصة (أيام)'
+                }
+                value={membershipDuration}
+                onChange={(n) =>
+                  setMembershipDuration(Math.max(1, Math.floor(n ?? 1)))
+                }
+                min={1}
+              />
+            </View>
+            <Text style={styles.meta}>
+              العميل يختار يوم بداية الاشتراك — تاريخ النهاية يُحسب تلقائياً حسب
+              المدة.
+            </Text>
+          </View>
+        ) : null}
+
+        {!isHourlyPeriods && !isDayExclusivePackage && !isGymMembership ? (
           <CloudinaryImagePicker
             urls={images}
             onChange={setImages}
@@ -679,23 +1177,39 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
 
         {!isHourlyPeriods ? (
           <View style={styles.card}>
-            {isHotel || isChalet || isEventPackage || isAppointment || isCar ? (
+            {isHotel ||
+            isChalet ||
+            isEventPackage ||
+            isDayExclusivePackage ||
+            isGymMembership ||
+            isAppointment ||
+            isCatalogItem ? (
               <Text style={styles.hint}>
                 {isHotel
                   ? 'الغرف هي خدمات الفندق — تظهر في «استعراض الغرف» على صفحة التفاصيل.'
                   : isTairaman
-                    ? 'الباقات هي خدمات الطيرمان — تظهر في قسم الباقات على صفحة التفاصيل.'
+                    ? 'الباقات هي خدمات الطيرمان — يمكنك اختيار باقة يوم بسعر ثابت أو حجز بالساعة.'
                     : isChalet
                       ? 'الباقات هي خدمات الشاليه — تظهر في قسم «الغرف والباقات» على صفحة التفاصيل.'
                       : isHall
                         ? 'الباقات تظهر في صفحة القاعة مع السعة ووقت المناسبة.'
                         : isArtist
                           ? 'باقات الحفل تظهر مع وقت التواجد في صفحة الفنان.'
-                          : isAppointment
-                            ? 'كل خدمة لها مدة وسعر — تظهر مواعيدها للعميل عند الحجز.'
-                            : isCar
-                              ? 'كل سيارة لها مقاعد وموديل وناقل حركة — تُحجز بأيام الاستلام/الإرجاع.'
-                              : null}
+                          : isGymMembership
+                            ? 'باقة اشتراك: الاسم والوصف والأسعار والمدة — العميل يختار يوم بداية الاشتراك.'
+                            : isPoolDayPackage
+                              ? 'باقة يوم كامل: الاسم والوصف والأسعار — العميل يختار يوماً واحداً من التقويم لحجز المسبح كاملاً.'
+                              : isPhotoPackage
+                                ? 'الباقة: الاسم والوصف والأسعار فقط — العميل يختار يوماً واحداً للحجز.'
+                                : isAppointment
+                                  ? 'كل خدمة لها مدة وسعر — تظهر مواعيدها للعميل عند الحجز.'
+                                  : isApparel
+                                    ? 'كل منتج يظهر مباشرة في تصنيف الملبوسات — التأجير بسعر اليوم × عدد الأيام.'
+                                    : isTransport
+                                      ? 'كل مركبة تظهر مباشرة في تصنيف النقليات — التأجير بأيام الاستلام/الإرجاع.'
+                                      : isCar
+                                        ? 'كل سيارة تظهر مباشرة في تصنيف السيارات — التأجير بأيام الاستلام/الإرجاع.'
+                                        : null}
               </Text>
             ) : null}
 
@@ -716,15 +1230,21 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
                           ? 'مثال: باقة الزفاف'
                           : isArtist
                             ? 'مثال: زفّة كاملة'
-                            : isHealth
-                              ? 'مثال: كشف عام'
-                              : isSalon
-                                ? 'مثال: قص وتصفيف'
-                                : isPhoto
+                            : isGymMembership
+                              ? membershipUnit === 'MONTHS'
+                                ? 'مثال: اشتراك شهري'
+                                : 'مثال: اشتراك 30 يوم'
+                              : isPoolDayPackage
+                                ? 'مثال: حجز المسبح ليوم كامل'
+                                : isPhotoPackage
                                   ? 'مثال: جلسة تصوير عروس'
-                                  : isCar
-                                    ? 'مثال: تويوتا كامري'
-                                    : 'اسم الخدمة'
+                                  : isHealth
+                                    ? 'مثال: كشف عام'
+                                    : isSalon
+                                      ? 'مثال: قص وتصفيف'
+                                      : isCar
+                                        ? 'مثال: تويوتا كامري'
+                                        : 'اسم الخدمة'
                 }
                 placeholderTextColor={theme.colors.textSecondary}
                 textAlign="right"
@@ -732,7 +1252,9 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
             </View>
 
             <View style={styles.field}>
-              <Text style={styles.label}>الوصف</Text>
+              <Text style={styles.label}>
+                {isDayExclusivePackage || isGymMembership ? 'التفاصيل' : 'الوصف'}
+              </Text>
               <TextInput
                 style={[styles.input, styles.textArea]}
                 value={description}
@@ -740,13 +1262,19 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
                 placeholder={
                   isHotel
                     ? 'وصف الغرفة والمرافق'
-                    : isChalet || isEventPackage
-                      ? 'وصف الباقة وما تشمله'
-                      : isAppointment
-                        ? 'وصف الخدمة وما تشمله'
-                        : isCar
-                          ? 'وصف السيارة ومواصفاتها'
-                          : 'وصف الخدمة'
+                    : isGymMembership
+                      ? 'ما يشمله الاشتراك (صالة أوزان، كاردو، مدرب…)'
+                      : isPoolDayPackage
+                        ? 'ما يشمله حجز المسبح ليوم كامل'
+                        : isPhotoPackage
+                          ? 'تفاصيل الجلسة وما تشمله الباقة'
+                          : isChalet || isEventPackage
+                            ? 'وصف الباقة وما تشمله'
+                            : isAppointment
+                              ? 'وصف الخدمة وما تشمله'
+                              : isCar
+                                ? 'وصف السيارة ومواصفاتها'
+                                : 'وصف الخدمة'
                 }
                 placeholderTextColor={theme.colors.textSecondary}
                 textAlign="right"
@@ -757,7 +1285,7 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
         ) : (
           <View style={styles.card}>
             <Text style={styles.hint}>
-              {isPool
+              {isPoolHourly
                 ? 'الاسم والصور والوصف وسعة المسبح تُضبط من تفاصيل المنشأة. هنا تُضاف فترات الأسعار فقط.'
                 : 'الاسم والصور والوصف وعدد اللاعبين وأبعاد الملعب تُضبط من تفاصيل المنشأة. هنا تُضاف فترات الأسعار فقط.'}
             </Text>
@@ -771,7 +1299,7 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
           {isHourlyPeriods ? (
             <>
               <Text style={styles.hint}>
-                {isPool
+                {isPoolHourly
                   ? 'حدّد فترات المسبح وسعر الساعة لكل فترة. يظهر للعميل كبطاقة أسعار.'
                   : 'حدّد فترات الملعب وسعر الساعة لكل فترة. يظهر للعميل كبطاقة أسعار، ويُحسب الحجز حسب الفترة المختارة.'}
               </Text>
@@ -858,11 +1386,21 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
           ) : useMultiCurrency ? (
             <>
               <Text style={styles.hint}>
-                أدخل السعر بكل العملات — يظهر للعميل حسب عملته المختارة.
+                {isTairamanHourly
+                  ? 'أدخل سعر الساعة بكل العملات — يُضرب بعدد الساعات التي يختارها العميل.'
+                  : isCatalogItem
+                    ? 'أدخل سعر اليوم بكل العملات — يُضرب بعدد أيام التأجير.'
+                    : 'أدخل السعر بكل العملات — يظهر للعميل حسب عملته المختارة.'}
               </Text>
               {PRICE_FIELDS.map(({ code, label, placeholder }) => (
                 <View key={code} style={styles.field}>
-                  <Text style={styles.label}>{label}</Text>
+                  <Text style={styles.label}>
+                    {isTairamanHourly
+                      ? `سعر الساعة — ${label}`
+                      : isCatalogItem
+                        ? `سعر اليوم — ${label}`
+                        : label}
+                  </Text>
                   <TextInput
                     style={styles.input}
                     value={prices[code]}
@@ -893,17 +1431,24 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
             العربون ثابت {DEPOSIT_PERCENTAGE}% لجميع{' '}
             {isHotel
               ? 'الغرف'
-              : isChalet || isEventPackage
+              : isChalet || isEventPackage || isPhotoPackage
                 ? 'الباقات'
                 : isHourlyPeriods
                   ? 'الحجوزات'
-                  : isCar
-                    ? 'السيارات'
+                  : isCatalogItem
+                    ? isApparel
+                      ? 'المنتجات'
+                      : isTransport
+                        ? 'المركبات'
+                        : 'السيارات'
                     : 'الخدمات'}
           </Text>
         </View>
 
-        {!isHourlyPeriods ? (
+        {!isHourlyPeriods &&
+        !isDayExclusivePackage &&
+        !isGymMembership &&
+        !isSalonPackage ? (
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>التفاصيل</Text>
             {isChalet && !isTairaman ? (
@@ -914,7 +1459,9 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
             ) : null}
             {isTairaman ? (
               <Text style={styles.hint}>
-                أدخل سعة الباقة والوقت من–إلى — تظهر كما هي في صفحة الطيرمان.
+                {isTairamanHourly
+                  ? 'العميل يختار يوماً ووقت الدخول والمغادرة — الإجمالي = سعر الساعة × عدد الساعات.'
+                  : 'أدخل سعة الباقة والوقت من–إلى — تظهر كما هي في صفحة الطيرمان.'}
               </Text>
             ) : null}
             {isHall ? (
@@ -927,14 +1474,16 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
                 أدخل وقت التواجد من–إلى — يظهر للعميل ويُقفل اليوم بعد دفع العربون.
               </Text>
             ) : null}
-            {isAppointment ? (
+            {isHealthAppointment ? (
               <Text style={styles.hint}>
                 مدة الخدمة تحدد طول الموعد في جدول الحجوزات.
               </Text>
             ) : null}
-            {isCar ? (
+            {isCatalogItem ? (
               <Text style={styles.hint}>
-                مواصفات السيارة تظهر كشرائح في صفحة التفاصيل وعند الحجز.
+                {isApparel
+                  ? 'المقاس واللون يظهران للعميل في بطاقة المنتج. السعر لليوم الواحد.'
+                  : 'المواصفات تظهر للعميل في بطاقة المنتج. السعر لليوم الواحد.'}
               </Text>
             ) : null}
             <View style={styles.steppers}>
@@ -1008,6 +1557,35 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
                 </>
               ) : isTairaman || isEventPackage ? (
                 <>
+                  {isTairaman ? (
+                    <View style={styles.field}>
+                      <Text style={styles.label}>نوع الحجز</Text>
+                      <View style={styles.periodRow}>
+                        {TAIRAMAN_PRICING_OPTIONS.map((opt) => {
+                          const selected = tairamanPricingMode === opt.id;
+                          return (
+                            <Pressable
+                              key={opt.id}
+                              style={[
+                                styles.periodChip,
+                                selected && styles.periodChipOn,
+                              ]}
+                              onPress={() => setTairamanPricingMode(opt.id)}
+                            >
+                              <Text
+                                style={[
+                                  styles.periodChipText,
+                                  selected && styles.periodChipTextOn,
+                                ]}
+                              >
+                                {opt.label}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    </View>
+                  ) : null}
                   {(isHall || isTairaman) ? (
                     <QuantityStepper
                       label="السعة (أشخاص أو أقل)"
@@ -1018,17 +1596,16 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
                     />
                   ) : null}
                   {isTairaman ? (
-                    <QuantityStepper
-                      label="عدد الطيرمانات المتاحة لهذه الباقة"
-                      value={inventory}
-                      onChange={(n) => setInventory(Math.max(1, n ?? 1))}
-                      min={1}
-                      maxLength={6}
-                    />
+                    <Text style={styles.meta}>
+                      عدد الطيرمانات المتاحة ({facilityInventory}) يُضبط من
+                      تفاصيل المنشأة.
+                    </Text>
                   ) : null}
                   <View style={styles.timeRow}>
                     <View style={[styles.field, styles.timeField]}>
-                      <Text style={styles.label}>من الساعة</Text>
+                      <Text style={styles.label}>
+                        {isTairamanHourly ? 'من (ساعات العمل)' : 'من الساعة'}
+                      </Text>
                       <TextInput
                         style={styles.input}
                         value={fromTime}
@@ -1041,7 +1618,9 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
                       />
                     </View>
                     <View style={[styles.field, styles.timeField]}>
-                      <Text style={styles.label}>إلى الساعة</Text>
+                      <Text style={styles.label}>
+                        {isTairamanHourly ? 'إلى (ساعات العمل)' : 'إلى الساعة'}
+                      </Text>
                       <TextInput
                         style={styles.input}
                         value={toTime}
@@ -1054,16 +1633,46 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
                       />
                     </View>
                   </View>
+                  {isTairamanHourly ? (
+                    <Text style={styles.meta}>
+                      العميل يختار يوم الحجز ثم ساعات الدخول والمغادرة ضمن هذا
+                      النطاق. الإجمالي = سعر الساعة × عدد الساعات.
+                    </Text>
+                  ) : null}
                 </>
-              ) : isAppointment ? (
+              ) : isHealthAppointment ? (
                 <QuantityStepper
                   label="مدة الخدمة (دقيقة)"
                   value={slotMinutes}
                   onChange={setSlotMinutes}
                   min={5}
                 />
-              ) : isCar ? (
+              ) : isSalonPackage ? null : isCar || isTransport ? (
                 <>
+                  {isCar ? (
+                    <View style={styles.field}>
+                      <Text style={styles.label}>ماركة السيارة</Text>
+                      <Pressable
+                        style={styles.select}
+                        onPress={() => setBrandPickerOpen(true)}
+                      >
+                        <Ionicons
+                          name="chevron-down"
+                          size={18}
+                          color={theme.colors.textSecondary}
+                        />
+                        <Text
+                          style={[
+                            styles.selectValue,
+                            !carBrand.trim() && styles.selectPlaceholder,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {carBrand.trim() || 'اختر الماركة'}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
                   <QuantityStepper
                     label="عدد المقاعد"
                     value={seats}
@@ -1113,11 +1722,68 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
                     </View>
                   </View>
                   <QuantityStepper
-                    label="عدد السيارات من هذا النوع"
+                    label={
+                      isTransport
+                        ? 'عدد المركبات من هذا النوع'
+                        : 'عدد السيارات من هذا النوع'
+                    }
                     value={inventory}
                     onChange={(n) => setInventory(Math.max(1, n ?? 1))}
                     min={1}
                   />
+                  <DynamicLineList
+                    label="وسائل الراحة"
+                    hint={
+                      isTransport
+                        ? 'مثال: سائق، تكييف، تأمين'
+                        : 'مثال: تأمين أساسي، تكييف، GPS'
+                    }
+                    items={productAmenities}
+                    onChange={setProductAmenities}
+                    placeholder="وسيلة راحة"
+                    addLabel="إضافة"
+                  />
+                  <Text style={styles.meta}>السعر لليوم الواحد × أيام التأجير.</Text>
+                </>
+              ) : isApparel ? (
+                <>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>المقاس</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={apparelSize}
+                      onChangeText={setApparelSize}
+                      placeholder="مثال: L أو 42"
+                      placeholderTextColor={theme.colors.textSecondary}
+                      textAlign="right"
+                    />
+                  </View>
+                  <View style={styles.field}>
+                    <Text style={styles.label}>اللون (اختياري)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={apparelColor}
+                      onChangeText={setApparelColor}
+                      placeholder="مثال: أسود"
+                      placeholderTextColor={theme.colors.textSecondary}
+                      textAlign="right"
+                    />
+                  </View>
+                  <QuantityStepper
+                    label="الكمية المتاحة من هذا المنتج"
+                    value={inventory}
+                    onChange={(n) => setInventory(Math.max(1, n ?? 1))}
+                    min={1}
+                  />
+                  <DynamicLineList
+                    label="وسائل الراحة"
+                    hint="مثال: تنظيف، تعديل مقاس"
+                    items={productAmenities}
+                    onChange={setProductAmenities}
+                    placeholder="وسيلة راحة"
+                    addLabel="إضافة"
+                  />
+                  <Text style={styles.meta}>السعر لليوم الواحد × أيام التأجير.</Text>
                 </>
               ) : (
                 <>
@@ -1151,11 +1817,23 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
               )}
             </View>
             <Text style={styles.meta}>
-              {isAppointment
+              {isHealthAppointment
                 ? 'يُفتح جدول المواعيد تلقائياً لـ 14 يوماً القادمة'
                 : `يُفتح التقويم تلقائياً لـ ${SEED_DAYS} يوماً القادمة`}
             </Text>
           </View>
+        ) : isSalonPackage ? (
+          <Text style={styles.meta}>
+            يُفتح جدول المواعيد تلقائياً لـ 14 يوماً القادمة — حدّد ما تشمله الباقة أعلاه
+          </Text>
+        ) : isDayExclusivePackage || isGymMembership ? (
+          <Text style={styles.meta}>
+            {isGymMembership
+              ? `يُفتح تقويم أيام البداية تلقائياً لـ ${SEED_DAYS} يوماً القادمة — العميل يختار يوم بداية الاشتراك`
+              : isPoolDayPackage
+                ? `يُفتح تقويم الأيام تلقائياً لـ ${SEED_DAYS} يوماً القادمة — العميل يختار يوماً واحداً لحجز المسبح كاملاً`
+                : `يُفتح تقويم الأيام تلقائياً لـ ${SEED_DAYS} يوماً القادمة — العميل يختار يوماً واحداً`}
+          </Text>
         ) : (
           <Text style={styles.meta}>
             يُفتح جدول الساعات تلقائياً لـ 14 يوماً القادمة
@@ -1206,6 +1884,76 @@ export function ProviderServiceFormScreen({ route, navigation }: Props) {
           </Pressable>
         ) : null}
       </KeyboardAwareScrollView>
+
+      {isCar ? (
+        <>
+          <OptionPickerSheet
+            visible={brandPickerOpen}
+            title="ماركة السيارة"
+            subtitle="اختر ماركة محفوظة أو أضف ماركة جديدة"
+            options={carBrands.map((name) => ({ id: name, name }))}
+            selectedId={carBrand.trim() || null}
+            onClose={() => setBrandPickerOpen(false)}
+            onSelect={(opt) => setCarBrand(String(opt.name))}
+            actionLabel="+ إضافة ماركة جديدة"
+            onAction={() => {
+              setNewBrandDraft('');
+              setAddingBrand(true);
+            }}
+          />
+
+          <SmoothBottomSheet
+            visible={addingBrand}
+            onClose={() => {
+              setAddingBrand(false);
+              setNewBrandDraft('');
+            }}
+            sheetStyle={styles.brandSheet}
+          >
+            <Text style={styles.brandSheetTitle}>ماركة جديدة</Text>
+            <Text style={styles.brandSheetHint}>
+              تُحفظ الماركة وتظهر لاحقاً في قائمة الاختيار وفي تصفية السيارات.
+            </Text>
+            <TextInput
+              style={styles.input}
+              value={newBrandDraft}
+              onChangeText={setNewBrandDraft}
+              placeholder="مثال: تويوتا"
+              placeholderTextColor={theme.colors.textSecondary}
+              textAlign="right"
+              autoFocus
+            />
+            <Pressable
+              style={styles.brandSaveBtn}
+              onPress={() => {
+                const next = newBrandDraft.trim().replace(/\s+/g, ' ');
+                if (!next) {
+                  setError('أدخل اسم الماركة');
+                  return;
+                }
+                setCarBrand(next);
+                setCarBrands((prev) => {
+                  if (
+                    prev.some(
+                      (b) => b.trim().toLowerCase() === next.toLowerCase(),
+                    )
+                  ) {
+                    return prev;
+                  }
+                  return [...prev, next].sort((a, b) =>
+                    a.localeCompare(b, 'ar'),
+                  );
+                });
+                setAddingBrand(false);
+                setNewBrandDraft('');
+                setError(null);
+              }}
+            >
+              <Text style={styles.brandSaveBtnText}>حفظ الماركة</Text>
+            </Pressable>
+          </SmoothBottomSheet>
+        </>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -1294,6 +2042,60 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
   },
   periodChipTextOn: { color: '#fff' },
+  select: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#F7F9FC',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  selectValue: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    color: theme.colors.text,
+    textAlign: 'right',
+  },
+  selectPlaceholder: {
+    color: theme.colors.textSecondary,
+    fontWeight: '500',
+  },
+  brandSheet: {
+    paddingHorizontal: 20,
+    paddingBottom: 28,
+    gap: 12,
+  },
+  brandSheetTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: theme.colors.primary,
+    textAlign: 'right',
+    width: '100%',
+  },
+  brandSheetHint: {
+    fontSize: 13,
+    color: theme.colors.textSecondary,
+    textAlign: 'right',
+    lineHeight: 20,
+    width: '100%',
+  },
+  brandSaveBtn: {
+    height: 50,
+    borderRadius: 14,
+    backgroundColor: theme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  brandSaveBtnText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '800',
+  },
   periodCard: {
     backgroundColor: '#F7F9FC',
     borderRadius: 14,

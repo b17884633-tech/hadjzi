@@ -3,9 +3,6 @@ import type { SessionUser } from './types';
 const TOKEN_KEY = 'hadjzi.admin.token';
 const USER_KEY = 'hadjzi.admin.user';
 
-export const DEMO_PHONE = '+967770000001';
-export const DEMO_PASSWORD = 'Password123!';
-
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }

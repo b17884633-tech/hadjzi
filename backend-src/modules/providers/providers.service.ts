@@ -7,7 +7,13 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Provider } from './entities/provider.entity';
+import { ProviderOffer } from './entities/provider-offer.entity';
+import { MedicalSpecialty } from './entities/medical-specialty.entity';
 import { CreateProviderDto, UpdateProviderDto } from './dto/provider.dto';
+import {
+  CreateProviderOfferDto,
+  UpdateProviderOfferDto,
+} from './dto/provider-offer.dto';
 import {
   DisputeStatus,
   ProviderStatus,
@@ -16,22 +22,127 @@ import {
 } from '../../common/enums';
 import { UsersService } from '../users/users.service';
 import { Dispute } from '../disputes/entities/dispute.entity';
+import { TtlCache } from '../../common/utils/ttl-cache';
+
+function toDateKey(value: string | Date): string {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) {
+    return value.slice(0, 10);
+  }
+  const d = value instanceof Date ? value : new Date(value);
+  return new Date(d.getTime() + 12 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function assertOfferRange(startsOn: string, endsOn: string) {
+  const a = toDateKey(startsOn);
+  const b = toDateKey(endsOn);
+  if (b < a) {
+    throw new BadRequestException('تاريخ نهاية العرض يجب أن يكون بعد تاريخ البداية');
+  }
+  return { startsOn: a, endsOn: b };
+}
 
 export type FacilityDisabledBy = 'ADMIN' | 'PROVIDER';
 
 const DISABLE_TAG = (providerId: string) => `[FACILITY_DISABLE:${providerId}]`;
 
+function normalizeSpecialtyName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const name = raw.trim().replace(/\s+/g, ' ');
+  return name.length ? name : null;
+}
+
+type ActiveOfferFacility = {
+  id: string;
+  providerId: string;
+  discountPercent: number;
+  startsOn: string;
+  endsOn: string;
+  provider: {
+    id: string;
+    businessName: string;
+    images: string[];
+    categoryId: number | null;
+    category: { id: number; name: string } | null;
+    city: { id: number; name: string } | null;
+  } | null;
+};
+
 @Injectable()
 export class ProvidersService {
+  private readonly specialtiesCache = new TtlCache<MedicalSpecialty[]>(120_000);
+  /** Legacy specialties living only in facility attributes are folded in once per process. */
+  private specialtiesBackfilled = false;
+  /** Home-screen offer banners — public, hit on every app open. */
+  private readonly activeOffersCache = new TtlCache<ActiveOfferFacility[]>(60_000);
+
   constructor(
     @InjectRepository(Provider)
     private readonly providers: Repository<Provider>,
+    @InjectRepository(ProviderOffer)
+    private readonly offers: Repository<ProviderOffer>,
+    @InjectRepository(MedicalSpecialty)
+    private readonly specialties: Repository<MedicalSpecialty>,
     @InjectRepository(Dispute)
     private readonly disputes: Repository<Dispute>,
     private readonly users: UsersService,
   ) {}
 
+  /**
+   * All known specialties: catalog + any specialty still only on facility attributes.
+   */
+  async listMedicalSpecialties() {
+    const cached = this.specialtiesCache.get();
+    if (cached) return cached;
+
+    if (!this.specialtiesBackfilled) {
+      // New specialties are synced on every facility write (syncSpecialtyFromAttributes),
+      // so this scan only has to catch rows created before that existed.
+      const rows = await this.providers
+        .createQueryBuilder('p')
+        .select(`DISTINCT trim(p.attributes->>'specialty')`, 'specialty')
+        .where(`p.attributes ? 'specialty'`)
+        .andWhere(`nullif(trim(p.attributes->>'specialty'), '') IS NOT NULL`)
+        .getRawMany<{ specialty: string }>();
+      for (const row of rows) {
+        await this.ensureMedicalSpecialty(row.specialty);
+      }
+      // Ensure «عام» always exists for hospitals / general practice.
+      await this.ensureMedicalSpecialty('عام');
+      this.specialtiesBackfilled = true;
+    }
+
+    return this.specialtiesCache.set(
+      await this.specialties.find({ order: { name: 'ASC' } }),
+    );
+  }
+
+  async ensureMedicalSpecialty(rawName: string) {
+    const name = normalizeSpecialtyName(rawName);
+    if (!name) return null;
+    const nameKey = name.toLowerCase();
+    const existing = await this.specialties.findOne({ where: { nameKey } });
+    if (existing) return existing;
+    try {
+      const saved = await this.specialties.save(
+        this.specialties.create({ name, nameKey }),
+      );
+      this.specialtiesCache.clear();
+      return saved;
+    } catch {
+      return this.specialties.findOne({ where: { nameKey } });
+    }
+  }
+
+  private async syncSpecialtyFromAttributes(
+    attributes: Record<string, unknown> | null | undefined,
+  ) {
+    const specialty = normalizeSpecialtyName(attributes?.specialty);
+    if (specialty) await this.ensureMedicalSpecialty(specialty);
+  }
+
   async createForUser(userId: string, dto: CreateProviderDto) {
+    const attributes = dto.attributes ?? {};
+    await this.syncSpecialtyFromAttributes(attributes);
     const provider = this.providers.create({
       userId,
       businessName: dto.businessName,
@@ -44,7 +155,7 @@ export class ProvidersService {
       longitude: dto.longitude ?? null,
       images: dto.images ?? [],
       cancellationPolicy: dto.cancellationPolicy ?? null,
-      attributes: dto.attributes ?? {},
+      attributes,
       status: ProviderStatus.PENDING_REVIEW,
     });
     await this.providers.save(provider);
@@ -96,7 +207,165 @@ export class ProvidersService {
     provider.services = (provider.services ?? []).filter(
       (s) => s.status === RecordStatus.ACTIVE,
     );
-    return provider;
+    const activeOffer = await this.findActiveOfferForProvider(provider.id);
+    return {
+      ...provider,
+      activeOffer: activeOffer
+        ? {
+            id: activeOffer.id,
+            providerId: activeOffer.providerId,
+            discountPercent: Number(activeOffer.discountPercent),
+            startsOn: toDateKey(activeOffer.startsOn),
+            endsOn: toDateKey(activeOffer.endsOn),
+          }
+        : null,
+    };
+  }
+
+  /** Highest active discount for a provider on a given stay date (defaults today). */
+  async findActiveOfferForProvider(
+    providerId: string,
+    onDate?: string,
+  ): Promise<ProviderOffer | null> {
+    const day = toDateKey(onDate ?? new Date());
+    return (
+      (await this.offers
+        .createQueryBuilder('o')
+        .where('o.provider_id = :providerId', { providerId })
+        .andWhere('o.starts_on <= :day', { day })
+        .andWhere('o.ends_on >= :day', { day })
+        .orderBy('o.discount_percent', 'DESC')
+        .getOne()) ?? null
+    );
+  }
+
+  /** Approved facilities with an offer window that includes today (for home banners). */
+  async listActiveOfferFacilities(): Promise<ActiveOfferFacility[]> {
+    const cached = this.activeOffersCache.get();
+    if (cached) return cached;
+
+    const day = toDateKey(new Date());
+    const rows = await this.offers
+      .createQueryBuilder('o')
+      .innerJoinAndSelect('o.provider', 'p')
+      .leftJoinAndSelect('p.category', 'category')
+      .leftJoinAndSelect('p.city', 'city')
+      .where('p.status = :status', { status: ProviderStatus.APPROVED })
+      .andWhere('o.starts_on <= :day', { day })
+      .andWhere('o.ends_on >= :day', { day })
+      .orderBy('o.discount_percent', 'DESC')
+      .addOrderBy('o.updated_at', 'DESC')
+      .getMany();
+
+    // One slide per facility — keep the strongest offer.
+    const byProvider = new Map<string, (typeof rows)[0]>();
+    for (const row of rows) {
+      const existing = byProvider.get(row.providerId);
+      if (!existing || Number(row.discountPercent) > Number(existing.discountPercent)) {
+        byProvider.set(row.providerId, row);
+      }
+    }
+    const result: ActiveOfferFacility[] = Array.from(byProvider.values()).map(
+      (o) => ({
+        id: o.id,
+        providerId: o.providerId,
+        discountPercent: Number(o.discountPercent),
+        startsOn: toDateKey(o.startsOn),
+        endsOn: toDateKey(o.endsOn),
+        provider: o.provider
+          ? {
+              id: o.provider.id,
+              businessName: o.provider.businessName,
+              images: o.provider.images ?? [],
+              categoryId: o.provider.categoryId,
+              category: o.provider.category
+                ? { id: o.provider.category.id, name: o.provider.category.name }
+                : null,
+              city: o.provider.city
+                ? { id: o.provider.city.id, name: o.provider.city.name }
+                : null,
+            }
+          : null,
+      }),
+    );
+    return this.activeOffersCache.set(result);
+  }
+
+  async listOffersOwned(userId: string, providerId: string) {
+    await this.findOwned(userId, providerId);
+    const rows = await this.offers.find({
+      where: { providerId },
+      order: { startsOn: 'DESC' },
+    });
+    return rows.map((o) => ({
+      ...o,
+      discountPercent: Number(o.discountPercent),
+      startsOn: toDateKey(o.startsOn),
+      endsOn: toDateKey(o.endsOn),
+    }));
+  }
+
+  async createOfferOwned(
+    userId: string,
+    providerId: string,
+    dto: CreateProviderOfferDto,
+  ) {
+    await this.findOwned(userId, providerId);
+    const { startsOn, endsOn } = assertOfferRange(dto.startsOn, dto.endsOn);
+    const offer = this.offers.create({
+      providerId,
+      discountPercent: dto.discountPercent,
+      startsOn,
+      endsOn,
+    });
+    const saved = await this.offers.save(offer);
+    this.activeOffersCache.clear();
+    return {
+      ...saved,
+      discountPercent: Number(saved.discountPercent),
+      startsOn: toDateKey(saved.startsOn),
+      endsOn: toDateKey(saved.endsOn),
+    };
+  }
+
+  async updateOfferOwned(
+    userId: string,
+    providerId: string,
+    offerId: string,
+    dto: UpdateProviderOfferDto,
+  ) {
+    await this.findOwned(userId, providerId);
+    const offer = await this.offers.findOne({
+      where: { id: offerId, providerId },
+    });
+    if (!offer) throw new NotFoundException('العرض غير موجود');
+
+    if (dto.discountPercent != null) offer.discountPercent = dto.discountPercent;
+    const startsOn = dto.startsOn != null ? toDateKey(dto.startsOn) : toDateKey(offer.startsOn);
+    const endsOn = dto.endsOn != null ? toDateKey(dto.endsOn) : toDateKey(offer.endsOn);
+    const range = assertOfferRange(startsOn, endsOn);
+    offer.startsOn = range.startsOn;
+    offer.endsOn = range.endsOn;
+
+    const saved = await this.offers.save(offer);
+    this.activeOffersCache.clear();
+    return {
+      ...saved,
+      discountPercent: Number(saved.discountPercent),
+      startsOn: toDateKey(saved.startsOn),
+      endsOn: toDateKey(saved.endsOn),
+    };
+  }
+
+  async deleteOfferOwned(userId: string, providerId: string, offerId: string) {
+    await this.findOwned(userId, providerId);
+    const offer = await this.offers.findOne({
+      where: { id: offerId, providerId },
+    });
+    if (!offer) throw new NotFoundException('العرض غير موجود');
+    await this.offers.remove(offer);
+    this.activeOffersCache.clear();
+    return { ok: true };
   }
 
   async updateOwned(userId: string, providerId: string, dto: UpdateProviderDto) {
@@ -115,6 +384,7 @@ export class ProvidersService {
     if (dto.attributes !== undefined) {
       // Replace jsonb wholesale so TypeORM always persists nested key changes
       provider.attributes = { ...(dto.attributes ?? {}) };
+      await this.syncSpecialtyFromAttributes(provider.attributes);
     }
     await this.providers.save(provider);
     return this.findOwned(userId, providerId);
@@ -149,6 +419,7 @@ export class ProvidersService {
       delete attrs.disabledAt;
       provider.attributes = attrs;
       await this.providers.save(provider);
+      this.activeOffersCache.clear();
       await this.resolveOpenFacilityDisableDisputes(provider.id, userId);
       return this.findOwned(userId, providerId);
     }
@@ -166,6 +437,7 @@ export class ProvidersService {
     attrs.disabledAt = new Date().toISOString();
     provider.attributes = attrs;
     await this.providers.save(provider);
+    this.activeOffersCache.clear();
 
     await this.disputes.save(
       this.disputes.create({
@@ -188,6 +460,7 @@ export class ProvidersService {
     }
     this.applyAdminStatus(provider, status);
     await this.providers.save(provider);
+    this.activeOffersCache.clear();
     return this.providers.findOneByOrFail({ id });
   }
 

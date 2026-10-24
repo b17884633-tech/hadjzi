@@ -14,10 +14,14 @@ import { AdminService } from './admin.service';
 import { AdminController } from './admin.controller';
 import { UserNotificationsController } from './user-notifications.controller';
 import { BookingModule } from '../booking/booking.module';
+import { PushModule } from '../push/push.module';
+import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
     BookingModule,
+    PushModule,
+    UsersModule,
     TypeOrmModule.forFeature([
       User,
       Provider,

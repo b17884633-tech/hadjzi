@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { AppText as Text } from '@/core/ui/components/AppText';
 import { Ionicons } from '@expo/vector-icons';
@@ -12,6 +12,10 @@ type Props = {
   min?: number;
   /** Digits allowed in the input (default 6 — supports large capacities). */
   maxLength?: number;
+  /** Optional control on the same row as +/- (e.g. compact photo upload). */
+  accessory?: ReactNode;
+  /** Optional content under the controls row (e.g. photo thumbnails). */
+  accessoryFooter?: ReactNode;
 };
 
 function toAsciiDigits(raw: string): string {
@@ -29,6 +33,8 @@ export function QuantityStepper({
   step = 1,
   min = 0,
   maxLength = 6,
+  accessory,
+  accessoryFooter,
 }: Props) {
   const current = value ?? min;
   const [text, setText] = useState(String(current));
@@ -64,6 +70,7 @@ export function QuantityStepper({
     <View style={styles.wrap}>
       <Text style={styles.label}>{label}</Text>
       <View style={styles.controls}>
+        {accessory ? <View style={styles.accessory}>{accessory}</View> : null}
         <Pressable style={styles.btn} hitSlop={10} onPress={() => bump(step)}>
           <Ionicons name="add" size={20} color={theme.colors.primary} />
         </Pressable>
@@ -94,6 +101,9 @@ export function QuantityStepper({
           <Ionicons name="remove" size={20} color={theme.colors.primary} />
         </Pressable>
       </View>
+      {accessoryFooter ? (
+        <View style={styles.accessoryFooter}>{accessoryFooter}</View>
+      ) : null}
     </View>
   );
 }
@@ -123,6 +133,15 @@ const styles = StyleSheet.create({
     gap: 14,
     direction: 'ltr',
     alignSelf: 'stretch',
+  },
+  accessory: {
+    marginRight: 4,
+  },
+  accessoryFooter: {
+    width: '100%',
+    alignItems: 'flex-end',
+    flexGrow: 0,
+    flexShrink: 0,
   },
   btn: {
     width: 42,

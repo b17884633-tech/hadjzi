@@ -25,7 +25,10 @@ import { theme } from '../../core/ui/theme';
 import { useApp } from '../../di/AppProvider';
 import { RootStackParamList } from '../navigation/types';
 import {
+  applyOfferToTotal,
   eachBlockedIsoDate,
+  membershipEndInclusive,
+  membershipLabel,
   nightsBetween,
   packagePeriodLabel,
   periodLabelForSlot,
@@ -76,31 +79,78 @@ export function BookingDateScreen() {
 
   const depositPct = DEPOSIT_PERCENTAGE;
   const packagePeriod = params.packagePeriod;
+  const pricePeriods = params.pricePeriods ?? [];
+  const hasPeriodPricing = pricePeriods.length > 0;
   const isHallCategory =
     /صالة|قاعة|صالات|قاعات|hall/i.test(params.categoryName ?? '') ||
     /زفافين|زفاف|فنان|مغن|زفة|فرق|مبرع|رقاص|singer|artist/i.test(
       params.categoryName ?? '',
     );
+  const isPhotoCategory = /تصوير|camera|photo/i.test(params.categoryName ?? '');
+  const isPoolCategory = /مسبح|مسابح|pool/i.test(params.categoryName ?? '');
+  const isGymCategory =
+    flow.kind === 'MEMBERSHIP' ||
+    (/نوادي|نادي|gym|fitness|club/i.test(params.categoryName ?? '') &&
+      !isPoolCategory);
   const isTairamanCategory = /طيرمان|طرمان|tairaman/i.test(
     params.categoryName ?? '',
   );
+  /** Cars / transport / apparel — price × days (not hotel nights). */
+  const isDayRentCatalog =
+    /سيارة|سيارات|نقل|نقليات|ملبوس|ملابس|أزياء|apparel|clothing/i.test(
+      params.categoryName ?? '',
+    );
+  const rangeUnitLabel = isDayRentCatalog ? 'يوم' : 'ليلة';
+  const rangeUnitLabelPlural = isDayRentCatalog ? 'أيام' : 'ليالي';
+  const membershipUnit = params.membershipUnit;
+  const membershipDuration = params.membershipDuration;
+  const isMembership =
+    flow.kind === 'MEMBERSHIP' ||
+    (isGymCategory &&
+      membershipUnit != null &&
+      membershipDuration != null &&
+      membershipDuration >= 1);
   /** Package already defines the schedule — customer only picks a day. */
   const isDayPackage =
-    packagePeriod === 'MORNING' ||
-    packagePeriod === 'EVENING' ||
-    isHallCategory ||
-    (isTairamanCategory &&
-      (!!params.timeLabel || !!params.packageFromTime)) ||
-    (flow.kind === 'DAY_PERIOD' &&
-      (!!params.timeLabel || !!params.packageFromTime));
+    !hasPeriodPricing &&
+    !isMembership &&
+    (packagePeriod === 'MORNING' ||
+      packagePeriod === 'EVENING' ||
+      isHallCategory ||
+      isPhotoCategory ||
+      (isPoolCategory && params.bookingType === 'EVENT_DAY') ||
+      params.bookingType === 'EVENT_DAY' ||
+      (isTairamanCategory &&
+        (!!params.timeLabel || !!params.packageFromTime)) ||
+      (flow.kind === 'DAY_PERIOD' &&
+        (!!params.timeLabel || !!params.packageFromTime)));
   /** Overnight / hotel-style range — not for morning/evening chalet packages. */
   const isRange = flow.kind === 'STAY_RANGE' && !isDayPackage;
-  /** Football / doctors / pools — dark timeline date+time picker. */
+  /** Football / doctors / pools / hourly tairaman — day + hours picker. */
   const isSlotTimeline =
     !isDayPackage &&
-    (flow.kind === 'SLOT_TIME' || flow.kind === 'SLOT_DURATION');
+    !isMembership &&
+    (flow.kind === 'SLOT_TIME' ||
+      flow.kind === 'SLOT_DURATION' ||
+      hasPeriodPricing);
   const fixedPeriodLabel =
-    params.timeLabel ?? packagePeriodLabel(packagePeriod) ?? undefined;
+    params.timeLabel ??
+    membershipLabel(membershipUnit, membershipDuration) ??
+    packagePeriodLabel(packagePeriod) ??
+    undefined;
+  const membershipEndDate =
+    isMembership &&
+    selectedDate &&
+    membershipUnit &&
+    membershipDuration != null &&
+    membershipDuration >= 1
+      ? membershipEndInclusive(selectedDate, membershipUnit, membershipDuration)
+      : undefined;
+  const screenTitle = isMembership
+    ? 'اشتراك النادي'
+    : isDayPackage && isPoolCategory
+      ? 'حجز المسبح'
+      : flow.title;
 
   const guestsPerRoom = params.guestsPerRoom;
   const maxGuests =
@@ -141,9 +191,6 @@ export function BookingDateScreen() {
   useEffect(() => {
     if (!user) navigation.replace('Auth');
   }, [user, navigation]);
-
-  const pricePeriods = params.pricePeriods ?? [];
-  const hasPeriodPricing = pricePeriods.length > 0;
 
   useEffect(() => {
     let active = true;
@@ -193,6 +240,11 @@ export function BookingDateScreen() {
   const availableDates = useMemo(() => {
     const set = new Set<string>();
     for (const a of availabilities) {
+      if (isDayPackage) {
+        // Photographers / halls / artists: only all-day rows are bookable.
+        if (!a.startTime) set.add(a.date);
+        continue;
+      }
       if (
         !a.startTime ||
         !hasPeriodPricing ||
@@ -202,7 +254,7 @@ export function BookingDateScreen() {
       }
     }
     return set;
-  }, [availabilities, hasPeriodPricing, pricePeriods]);
+  }, [availabilities, hasPeriodPricing, pricePeriods, isDayPackage]);
 
   const daySlots = useMemo(
     () =>
@@ -347,9 +399,12 @@ export function BookingDateScreen() {
     params.price,
   ]);
 
-  const totalPrice = isSlotTimeline
+  const rawTotalPrice = isSlotTimeline
     ? timelineTotal
     : unitPrice * billableUnits;
+
+  const offerPricing = applyOfferToTotal(rawTotalPrice, selectedDate, params);
+  const totalPrice = offerPricing.total;
 
   const activePeriodLabel = useMemo(() => {
     if (!hasPeriodPricing || !selectedSlots.length) return undefined;
@@ -368,7 +423,9 @@ export function BookingDateScreen() {
       return !!selectedDate && selectedSlotIds.length > 0 && !!selectedAvailability;
     }
     if (isRange) return rangeOk && !!selectedAvailability;
-    if (isDayPackage) return !!selectedDate && !!selectedAvailability;
+    if (isMembership || isDayPackage) {
+      return !!selectedDate && !!selectedAvailability;
+    }
     if (flow.kind === 'QUANTITY_DELIVERY') {
       return !!selectedDate && !!selectedAvailability && quantity >= 1;
     }
@@ -434,8 +491,13 @@ export function BookingDateScreen() {
   const goCheckout = () => {
     if (!selectedAvailability || !selectedDate) return;
     // Checkout total = price × quantity → encode full bill into price when apiQuantity is 1
+    // Use discounted totals so checkout matches server offer pricing.
     const checkoutPrice =
-      apiQuantity === 1 && billableUnits > 1 ? totalPrice : unitPrice;
+      apiQuantity === 1 && billableUnits > 1
+        ? totalPrice
+        : offerPricing.discountPercent > 0
+          ? Math.round(unitPrice * (1 - offerPricing.discountPercent / 100))
+          : unitPrice;
     const checkoutQty =
       apiQuantity === 1 && billableUnits > 1 ? 1 : apiQuantity > 0 ? apiQuantity : 1;
 
@@ -472,13 +534,22 @@ export function BookingDateScreen() {
     // With period pricing, pass the average hour rate so N × price ≈ total;
     // backend also resolves period from service attributes per slot start time.
     const navPrice = (() => {
-      if (isSlotTimeline && hasPeriodPricing && selectedSlots.length) {
-        return Math.round(timelineTotal / selectedSlots.length);
+      const base = (() => {
+        if (isSlotTimeline && hasPeriodPricing && selectedSlots.length) {
+          return Math.round(timelineTotal / selectedSlots.length);
+        }
+        if (multi || flow.kind === 'QUANTITY_DELIVERY' || flow.kind === 'TRANSPORT') {
+          return unitPrice;
+        }
+        return checkoutPrice;
+      })();
+      if (
+        offerPricing.discountPercent > 0 &&
+        !(apiQuantity === 1 && billableUnits > 1 && base === totalPrice)
+      ) {
+        return Math.round(base * (1 - offerPricing.discountPercent / 100));
       }
-      if (multi || flow.kind === 'QUANTITY_DELIVERY' || flow.kind === 'TRANSPORT') {
-        return unitPrice;
-      }
-      return checkoutPrice;
+      return base;
     })();
 
     navigation.navigate('BookingCheckout', {
@@ -487,10 +558,10 @@ export function BookingDateScreen() {
       availabilityId: selectedAvailability.id,
       availabilityIds: multiIds,
       bookingDate: selectedDate,
-      startTime: isDayPackage
+      startTime: isDayPackage || isMembership
         ? params.packageFromTime ?? selectedAvailability.startTime
         : selectedAvailability.startTime,
-      endTime: isDayPackage
+      endTime: isDayPackage || isMembership
         ? params.packageToTime ?? selectedAvailability.endTime
         : lastSlot?.endTime ?? selectedAvailability.endTime,
       quantity: multi ? 1 : checkoutQty,
@@ -499,7 +570,11 @@ export function BookingDateScreen() {
       children: childrenCount,
       price: navPrice,
       depositPercentage: depositPct,
-      checkOutDate: isRange ? checkOutDate : undefined,
+      checkOutDate: isMembership
+        ? membershipEndDate
+        : isRange
+          ? checkOutDate
+          : undefined,
       nights: isRange && nights > 0 ? nights : undefined,
       periodLabel:
         activePeriodLabel ??
@@ -507,6 +582,8 @@ export function BookingDateScreen() {
         periodLabel ??
         fixedPeriodLabel ??
         undefined,
+      membershipUnit: isMembership ? membershipUnit : undefined,
+      membershipDuration: isMembership ? membershipDuration : undefined,
       durationHours: isSlotTimeline
         ? Math.max(1, selectedSlotIds.length)
         : flow.needsDuration
@@ -533,7 +610,7 @@ export function BookingDateScreen() {
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
         <View style={styles.header}>
           <BackButton onPress={() => navigation.goBack()} />
-          <Text style={styles.headerTitle}>{flow.title}</Text>
+          <Text style={styles.headerTitle}>{screenTitle}</Text>
           <View style={styles.headerSpacer} />
         </View>
 
@@ -552,8 +629,8 @@ export function BookingDateScreen() {
                   lineHeight: 20,
                 }}
               >
-                لا توجد مواعيد مفتوحة حالياً. أعد فتح الصفحة أو تأكد أن مزوّد
-                الخدمة أضاف فترات الأسعار.
+                لا توجد ساعات متاحة حالياً. أعد فتح الصفحة أو تأكد أن مزوّد
+                الخدمة فعّل الحجز بالساعة لهذه الباقة.
               </Text>
             ) : null}
             <SlotReservationPanel
@@ -588,8 +665,10 @@ export function BookingDateScreen() {
           {canNext && selectedAvailability ? (
             <Text style={styles.slotFooterMeta}>
               {formatPrice(totalPrice)}
-              {selectedSlotIds.length > 1
-                ? ` · ${selectedSlotIds.length} فترات`
+              {selectedSlotIds.length > 0
+                ? ` · ${selectedSlotIds.length} ${
+                    selectedSlotIds.length === 1 ? 'ساعة' : 'ساعات'
+                  }`
                 : ''}
             </Text>
           ) : null}
@@ -630,7 +709,7 @@ export function BookingDateScreen() {
       <FormKeyboardView>
       <View style={styles.header}>
         <BackButton onPress={() => navigation.goBack()} />
-        <Text style={styles.headerTitle}>{flow.title}</Text>
+        <Text style={styles.headerTitle}>{screenTitle}</Text>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -640,17 +719,25 @@ export function BookingDateScreen() {
         bottomOffset={100}
       >
         <Text style={styles.question}>
-          {isDayPackage ? 'اختر يوم الحجز' : flow.question}
+          {isMembership
+            ? 'اختر يوم بداية الاشتراك'
+            : isDayPackage
+              ? 'اختر يوم الحجز'
+              : flow.question}
         </Text>
         <Text style={styles.hint}>
-          {isDayPackage
-            ? `باقة ${fixedPeriodLabel ?? 'يومية'} — اختر يوماً واحداً متاحاً.`
-            : flow.hint}
+          {isMembership
+            ? `${fixedPeriodLabel ?? 'اشتراك'} — اختر يوم البداية المتاح؛ تاريخ النهاية يُحسب تلقائياً.`
+            : isDayPackage
+              ? `باقة ${fixedPeriodLabel ?? 'يومية'} — اختر يوماً واحداً متاحاً.`
+              : flow.hint}
         </Text>
-        {isDayPackage && fixedPeriodLabel ? (
+        {(isDayPackage || isMembership) && fixedPeriodLabel ? (
           <View style={styles.rangeSummary}>
             <Text style={styles.rangeText}>{fixedPeriodLabel}</Text>
-            {params.packageFromTime && params.packageToTime ? (
+            {!isMembership &&
+            params.packageFromTime &&
+            params.packageToTime ? (
               <Text style={styles.rangeMeta}>
                 من {params.packageFromTime} إلى {params.packageToTime}
               </Text>
@@ -737,6 +824,20 @@ export function BookingDateScreen() {
 
             {rangeError ? <Text style={styles.error}>{rangeError}</Text> : null}
 
+            {isMembership && selectedDate ? (
+              <View style={styles.rangeSummary}>
+                <Text style={styles.rangeText}>
+                  البداية: {selectedDate}
+                  {membershipEndDate
+                    ? `  ←  النهاية: ${membershipEndDate}`
+                    : ''}
+                </Text>
+                {fixedPeriodLabel ? (
+                  <Text style={styles.rangeMeta}>{fixedPeriodLabel}</Text>
+                ) : null}
+              </View>
+            ) : null}
+
             {isRange && selectedDate ? (
               <View style={styles.rangeSummary}>
                 <Text style={styles.rangeText}>
@@ -744,7 +845,10 @@ export function BookingDateScreen() {
                   {checkOutDate ? `  ←  المغادرة: ${checkOutDate}` : '  — اختر يوم المغادرة'}
                 </Text>
                 {nights > 0 ? (
-                  <Text style={styles.rangeMeta}>{nights} ليلة</Text>
+                  <Text style={styles.rangeMeta}>
+                    {nights}{' '}
+                    {nights === 1 ? rangeUnitLabel : rangeUnitLabelPlural}
+                  </Text>
                 ) : null}
               </View>
             ) : null}
@@ -855,6 +959,12 @@ export function BookingDateScreen() {
             {canNext && selectedAvailability ? (
               <View style={styles.packageCard}>
                 <Text style={styles.priceNum}>{formatPrice(totalPrice)}</Text>
+                {offerPricing.discountPercent > 0 ? (
+                  <Text style={styles.offerMeta}>
+                    بعد تخفيض {offerPricing.discountPercent}% (كان{' '}
+                    {formatPrice(offerPricing.original)})
+                  </Text>
+                ) : null}
                 <Text style={styles.packageMeta}>{params.serviceName}</Text>
                 <View style={styles.divider} />
                 <View style={styles.metaRow}>
@@ -867,10 +977,12 @@ export function BookingDateScreen() {
                   <View style={styles.metaRow}>
                     <Text style={styles.metaText}>
                       {nights > 0
-                        ? `${nights} ليلة × ${formatPrice(unitPrice)}${
+                        ? `${nights} ${
+                            nights === 1 ? rangeUnitLabel : rangeUnitLabelPlural
+                          } × ${formatPrice(unitPrice)}${
                             flow.needsRooms ? ` × ${rooms} غرفة` : ''
                           }`
-                        : `السعر لليلة: ${formatPrice(unitPrice)}`}
+                        : `السعر ل${rangeUnitLabel}: ${formatPrice(unitPrice)}`}
                     </Text>
                     <Ionicons name="moon-outline" size={16} color={theme.colors.textSecondary} />
                   </View>
@@ -1122,6 +1234,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: theme.colors.textSecondary,
     textAlign: 'right',
+  },
+  offerMeta: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: theme.colors.discount,
+    textAlign: 'right',
+    marginTop: 2,
   },
   divider: {
     height: StyleSheet.hairlineWidth,

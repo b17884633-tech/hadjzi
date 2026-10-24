@@ -41,4 +41,12 @@ export interface Provider {
   latitude?: number | null;
   longitude?: number | null;
   services?: ServiceItem[];
+  /** Active period discount when the API includes it (public profile). */
+  activeOffer?: {
+    id: string;
+    providerId: string;
+    discountPercent: number;
+    startsOn: string;
+    endsOn: string;
+  } | null;
 }

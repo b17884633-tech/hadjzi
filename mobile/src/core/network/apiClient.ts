@@ -53,12 +53,13 @@ export function resolveApiBaseUrl(): string {
     if (Platform.OS === 'android') {
       return `http://10.0.2.2:${API_PORT}/api`;
     }
+    if (configured) {
+      return configured;
+    }
   }
 
-  if (configured) {
-    return configured;
-  }
-
+  // Release builds must never point at a developer machine, even if app.json
+  // still carries a localhost URL — fall back to the deployed API.
   return DEFAULT_API_BASE;
 }
 

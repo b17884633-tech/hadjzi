@@ -38,6 +38,8 @@ import {
   AdminUpdateUserDto,
 } from './dto/admin.dto';
 import { BookingService } from '../booking/booking.service';
+import { PushService } from '../push/push.service';
+import { UsersService } from '../users/users.service';
 
 import {
   DEFAULT_PAYMENT_ACCOUNT,
@@ -62,6 +64,8 @@ export class AdminService {
     private readonly settings: Repository<PlatformSetting>,
     @InjectRepository(AppNotification)
     private readonly notifications: Repository<AppNotification>,
+    private readonly push: PushService,
+    private readonly usersService: UsersService,
   ) {}
 
   async overview() {
@@ -104,13 +108,8 @@ export class AdminService {
       this.getDepositPercentage(),
     ]);
 
-    const moneyRows = await this.payments.find({
-      where: { status: PaymentStatus.SUCCESS },
-      select: ['amount', 'paymentType', 'createdAt'],
-    });
-
-    let collected = 0;
-    let refunded = 0;
+    // Aggregate in SQL — the payments table grows forever and must not be
+    // streamed into Node just to compute a few sums.
     const monthly = new Map<string, number>();
     const now = new Date();
     for (let i = 5; i >= 0; i -= 1) {
@@ -118,29 +117,50 @@ export class AdminService {
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       monthly.set(key, 0);
     }
-    for (const row of moneyRows) {
-      const amount = Number(row.amount);
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+
+    const [totals, monthlyRows, pendingRow] = await Promise.all([
+      this.payments
+        .createQueryBuilder('p')
+        .select('p.payment_type', 'paymentType')
+        .addSelect('COALESCE(SUM(p.amount), 0)', 'total')
+        .where('p.status = :status', { status: PaymentStatus.SUCCESS })
+        .groupBy('p.payment_type')
+        .getRawMany<{ paymentType: PaymentType; total: string }>(),
+      this.payments
+        .createQueryBuilder('p')
+        .select(`to_char(p.created_at, 'YYYY-MM')`, 'month')
+        .addSelect('p.payment_type', 'paymentType')
+        .addSelect('COALESCE(SUM(p.amount), 0)', 'total')
+        .where('p.status = :status', { status: PaymentStatus.SUCCESS })
+        .andWhere('p.created_at >= :from', { from: sixMonthsAgo })
+        .groupBy(`to_char(p.created_at, 'YYYY-MM')`)
+        .addGroupBy('p.payment_type')
+        .getRawMany<{ month: string; paymentType: PaymentType; total: string }>(),
+      this.payments
+        .createQueryBuilder('p')
+        .select('COALESCE(SUM(p.amount), 0)', 'total')
+        .where('p.status = :status', { status: PaymentStatus.INITIATED })
+        .getRawOne<{ total: string }>(),
+    ]);
+
+    let collected = 0;
+    let refunded = 0;
+    for (const row of totals) {
+      const amount = Number(row.total) || 0;
       if (row.paymentType === PaymentType.REFUND) refunded += amount;
       else collected += amount;
-      const created = new Date(row.createdAt);
-      const key = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, '0')}`;
-      if (monthly.has(key)) {
-        monthly.set(
-          key,
-          (monthly.get(key) ?? 0) +
-            (row.paymentType === PaymentType.REFUND ? -amount : amount),
-        );
-      }
     }
-
-    const pendingAmountRows = await this.payments.find({
-      where: { status: PaymentStatus.INITIATED },
-      select: ['amount'],
-    });
-    const pendingAmount = pendingAmountRows.reduce(
-      (sum, row) => sum + Number(row.amount),
-      0,
-    );
+    for (const row of monthlyRows) {
+      if (!monthly.has(row.month)) continue;
+      const amount = Number(row.total) || 0;
+      monthly.set(
+        row.month,
+        (monthly.get(row.month) ?? 0) +
+          (row.paymentType === PaymentType.REFUND ? -amount : amount),
+      );
+    }
+    const pendingAmount = Number(pendingRow?.total) || 0;
 
     const recentPayments = await this.payments.find({
       relations: ['customer', 'booking', 'booking.provider'],
@@ -294,7 +314,7 @@ export class AdminService {
     createdBy: string | null,
   ) {
     const copy = facilityStatusNotice(provider.businessName, status);
-    await this.notifications.save(
+    const saved = await this.notifications.save(
       this.notifications.create({
         title: copy.title,
         message: copy.message,
@@ -306,6 +326,7 @@ export class AdminService {
         readAt: null,
       }),
     );
+    void this.push.notifyForAppNotification(saved).catch(() => undefined);
   }
 
   async listUsers() {
@@ -342,6 +363,7 @@ export class AdminService {
     }
 
     await this.users.save(user);
+    this.usersService.invalidateAuthCache(user.id);
     return this.mapUser(user);
   }
 
@@ -356,6 +378,8 @@ export class AdminService {
       user.phoneVerified = true;
     }
     await this.users.save(user);
+    // Suspension must bite on the very next request, not after the auth cache TTL.
+    this.usersService.invalidateAuthCache(user.id);
     return this.mapUser(user);
   }
 
@@ -403,19 +427,20 @@ export class AdminService {
    * an INITIATED payment so Wallet can confirm them.
    */
   private async ensurePaymentsForPendingBookings() {
-    const pending = await this.bookings.find({
-      where: { status: BookingStatus.PENDING_PAYMENT },
-      order: { createdAt: 'DESC' },
-      take: 200,
-    });
+    // One query: pending bookings that have no payment row at all. Avoids a
+    // per-booking lookup on every dashboard / wallet load.
+    const pending = await this.bookings
+      .createQueryBuilder('b')
+      .where('b.status = :status', { status: BookingStatus.PENDING_PAYMENT })
+      .andWhere(
+        'NOT EXISTS (SELECT 1 FROM payments p WHERE p.booking_id = b.id)',
+      )
+      .orderBy('b.created_at', 'DESC')
+      .take(200)
+      .getMany();
     if (!pending.length) return;
 
     for (const booking of pending) {
-      const existing = await this.payments.findOne({
-        where: { bookingId: booking.id },
-      });
-      if (existing) continue;
-
       const notes = booking.customerNotes ?? '';
       const methodMatch = notes.match(/طريقة الدفع:\s*([A-Za-z0-9_]+)/);
       const refMatch = notes.match(/رقم الحوالة:\s*([^|]+)/);
@@ -665,6 +690,7 @@ export class AdminService {
         readAt: null,
       }),
     );
+    void this.push.notifyForAppNotification(saved).catch(() => undefined);
     const full = await this.notifications.findOne({
       where: { id: saved.id },
       relations: ['user'],

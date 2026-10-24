@@ -19,6 +19,10 @@ export type CategoryFilterValues = {
   minBathrooms?: number;
   minCapacity?: number;
   minPlayers?: number;
+  /** Selected car brand names (cars category). */
+  brands?: string[];
+  /** Selected medical specialties (health category). */
+  specialties?: string[];
   /** Availability: start / single date (YYYY-MM-DD) */
   availableDate?: string;
   /** Stay / car range end date (YYYY-MM-DD) */
@@ -39,6 +43,8 @@ export type FilterFieldKey =
   | 'bathrooms'
   | 'capacity'
   | 'players'
+  | 'brands'
+  | 'specialties'
   | 'availability';
 
 export type AvailabilityMode = 'none' | 'date' | 'date_time' | 'date_period' | 'date_range';
@@ -66,6 +72,17 @@ export function resolveCategoryFilterProfile(
   switch (flow.kind) {
     case 'STAY_RANGE':
       if (/سيارة|سيارات/i.test(categoryName ?? '')) {
+        return {
+          kind: flow.kind,
+          fields: [...base, 'brands'],
+          availabilityMode: 'date_range',
+        };
+      }
+      if (
+        /نقل|نقليات|ملبوس|ملابس|أزياء|apparel|clothing/i.test(
+          categoryName ?? '',
+        )
+      ) {
         return {
           kind: flow.kind,
           fields: base,
@@ -110,10 +127,23 @@ export function resolveCategoryFilterProfile(
         availabilityMode: 'date_time',
       };
     case 'SLOT_TIME':
+      if (/صح|عياد|مستشفى|أشعة|علاج|طبي|clinic|hospital/i.test(categoryName ?? '')) {
+        return {
+          kind: flow.kind,
+          fields: [...base, 'specialties'],
+          availabilityMode: 'date_time',
+        };
+      }
       return {
         kind: flow.kind,
         fields: base,
         availabilityMode: 'date_time',
+      };
+    case 'MEMBERSHIP':
+      return {
+        kind: flow.kind,
+        fields: base,
+        availabilityMode: 'date',
       };
     default:
       return {
@@ -140,6 +170,8 @@ export function countActiveFilters(filters: CategoryFilterValues): number {
   if (filters.minBathrooms != null) n += 1;
   if (filters.minCapacity != null) n += 1;
   if (filters.minPlayers != null) n += 1;
+  if (filters.brands?.length) n += 1;
+  if (filters.specialties?.length) n += 1;
   if (filters.availableDate) n += 1;
   if (filters.availableEndDate) n += 1;
   if (filters.availableTime) n += 1;
@@ -179,6 +211,20 @@ export function activeFilterChips(
   }
   if (filters.minPlayers != null) {
     chips.push({ key: 'players', label: `${filters.minPlayers}+ لاعب` });
+  }
+  if (filters.brands?.length) {
+    const label =
+      filters.brands.length === 1
+        ? filters.brands[0]
+        : `${filters.brands.length} ماركات`;
+    chips.push({ key: 'brands', label });
+  }
+  if (filters.specialties?.length) {
+    const label =
+      filters.specialties.length === 1
+        ? filters.specialties[0]
+        : `${filters.specialties.length} تخصصات`;
+    chips.push({ key: 'specialties', label });
   }
   if (filters.availableDate && filters.availableEndDate) {
     chips.push({
@@ -271,6 +317,19 @@ export function providerMatchesFilters(
   if (filters.maxDistanceKm != null) {
     const distance = numAttr(attrs, 'distanceKm', 'distance', 'distance_km');
     if (distance != null && distance > filters.maxDistanceKm) return false;
+  }
+
+  if (filters.specialties?.length) {
+    const facilityAttrs =
+      provider.attributes && typeof provider.attributes === 'object'
+        ? (provider.attributes as Record<string, unknown>)
+        : {};
+    const specialty =
+      typeof facilityAttrs.specialty === 'string'
+        ? facilityAttrs.specialty.trim().toLowerCase()
+        : '';
+    const keys = filters.specialties.map((s) => s.trim().toLowerCase());
+    if (!specialty || !keys.includes(specialty)) return false;
   }
 
   return true;

@@ -47,6 +47,10 @@ export function BookingCheckoutScreen() {
   const total = params.price * params.quantity * slotCount;
   const depositPct = DEPOSIT_PERCENTAGE;
   const depositAmount = Math.round((total * depositPct) / 100);
+  const isMembership =
+    params.membershipUnit != null &&
+    params.membershipDuration != null &&
+    params.membershipDuration >= 1;
 
   const guestLine = useMemo(() => {
     const adults = params.adults ?? 0;
@@ -67,13 +71,26 @@ export function BookingCheckoutScreen() {
         ? params.availabilityIds
         : [params.availabilityId];
 
+    const isMembership =
+      params.membershipUnit != null &&
+      params.membershipDuration != null &&
+      params.membershipDuration >= 1;
+
     const notesBase = [
       params.attendanceType ? `نوع الحضور: ${params.attendanceType}` : null,
       guestLine ? `عدد الأشخاص: ${guestLine}` : null,
-      params.checkOutDate ? `المغادرة: ${params.checkOutDate}` : null,
-      params.nights ? `الليالي: ${params.nights}` : null,
+      isMembership && params.checkOutDate
+        ? `نهاية الاشتراك: ${params.checkOutDate}`
+        : params.checkOutDate
+          ? `المغادرة: ${params.checkOutDate}`
+          : null,
+      !isMembership && params.nights ? `الليالي: ${params.nights}` : null,
       params.rooms ? `الغرف: ${params.rooms}` : null,
-      params.periodLabel ? `الفترة: ${params.periodLabel}` : null,
+      params.periodLabel
+        ? isMembership
+          ? `الاشتراك: ${params.periodLabel}`
+          : `الفترة: ${params.periodLabel}`
+        : null,
       params.durationHours
         ? `المدة: ${params.durationHours === 4 ? 'نصف يوم' : `${params.durationHours} ساعة`}`
         : null,
@@ -204,14 +221,22 @@ export function BookingCheckoutScreen() {
           <View style={styles.divider} />
           <Detail
             icon="calendar-outline"
-            label={`تاريخ الحجز: ${formatArabicDate(params.bookingDate)}`}
+            label={
+              isMembership
+                ? `بداية الاشتراك: ${formatArabicDate(params.bookingDate)}`
+                : `تاريخ الحجز: ${formatArabicDate(params.bookingDate)}`
+            }
           />
           {params.checkOutDate ? (
             <Detail
               icon="log-out-outline"
-              label={`المغادرة: ${formatArabicDate(params.checkOutDate)}${
-                params.nights ? ` (${params.nights} ليلة)` : ''
-              }`}
+              label={
+                isMembership
+                  ? `نهاية الاشتراك: ${formatArabicDate(params.checkOutDate)}`
+                  : `المغادرة: ${formatArabicDate(params.checkOutDate)}${
+                      params.nights ? ` (${params.nights} ليلة)` : ''
+                    }`
+              }
             />
           ) : null}
           {params.rooms ? (

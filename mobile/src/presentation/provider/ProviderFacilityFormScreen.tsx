@@ -29,9 +29,11 @@ import { CityPickerSheet } from '../home/components/CityPickerSheet';
 import { SmoothBottomSheet } from '../../core/ui/components/SmoothBottomSheet';
 import {
   facilityDisabledBy,
+  GENERAL_MEDICAL_SPECIALTY,
   type ProviderProfile,
 } from '../../data/remote/providerApi';
 import { CloudinaryImagePicker } from './CloudinaryImagePicker';
+import { CompactImageAttach } from './CompactImageAttach';
 import { DynamicLineList } from './DynamicLineList';
 import { OptionPickerSheet } from './OptionPickerSheet';
 import {
@@ -41,6 +43,8 @@ import {
   SERVICE_FACILITY_DEFAULTS,
   type FacilityKind,
 } from './categoryKinds';
+import { parseMapsUrl, parseYemenMapsUrl } from '../../core/maps/parseMapsUrl';
+import { FacilityMapCard } from '../../core/ui/components/FacilityMapCard';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ProviderFacilityForm'>;
 
@@ -119,6 +123,42 @@ function cleanList(items: string[]): string[] {
   return items.map((s) => s.trim()).filter(Boolean);
 }
 
+function urlList(attrs: Record<string, unknown> | undefined, key: string): string[] {
+  return strList(attrs, key).filter((u) => /^https?:\/\//i.test(u));
+}
+
+/** Map of space label → image URLs (chalet / tairaman detail photos). */
+function imageMap(
+  attrs: Record<string, unknown> | undefined,
+  key: string,
+): Record<string, string[]> {
+  const v = attrs?.[key];
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  const out: Record<string, string[]> = {};
+  for (const [label, urls] of Object.entries(v as Record<string, unknown>)) {
+    if (!label.trim() || !Array.isArray(urls)) continue;
+    const cleaned = urls.filter(
+      (u): u is string => typeof u === 'string' && /^https?:\/\//i.test(u),
+    );
+    if (cleaned.length) out[label.trim()] = cleaned;
+  }
+  return out;
+}
+
+function pruneImageMap(
+  map: Record<string, string[]>,
+  labels: string[],
+): Record<string, string[]> | undefined {
+  const allowed = new Set(cleanList(labels));
+  const out: Record<string, string[]> = {};
+  for (const [label, urls] of Object.entries(map)) {
+    if (!allowed.has(label)) continue;
+    const cleaned = urls.filter((u) => typeof u === 'string' && u.trim());
+    if (cleaned.length) out[label] = cleaned;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 function toOptionalNum(v: unknown): number | undefined {
   if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
   const n = Number(v);
@@ -142,7 +182,14 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
   const [businessName, setBusinessName] = useState('');
   const [description, setDescription] = useState('');
   const [addressDetails, setAddressDetails] = useState('');
+  /** Google Maps / OSM share URL — parsed into lat/lng (Yemen). */
+  const [locationUrl, setLocationUrl] = useState('');
+  const [locationLat, setLocationLat] = useState<number | null>(null);
+  const [locationLng, setLocationLng] = useState<number | null>(null);
+  const [locationError, setLocationError] = useState<string | null>(null);
   const [images, setImages] = useState<string[]>([]);
+  /** Past works for photographers — stored in attributes.portfolio */
+  const [portfolio, setPortfolio] = useState<string[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoryTree, setCategoryTree] = useState<Category[]>([]);
   /** Root category shown in the main dropdown. */
@@ -160,6 +207,13 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [subCategoryOpen, setSubCategoryOpen] = useState(false);
   const [cityOpen, setCityOpen] = useState(false);
+  const [specialty, setSpecialty] = useState('');
+  const [specialties, setSpecialties] = useState<string[]>([
+    GENERAL_MEDICAL_SPECIALTY,
+  ]);
+  const [specialtyPickerOpen, setSpecialtyPickerOpen] = useState(false);
+  const [addingSpecialty, setAddingSpecialty] = useState(false);
+  const [newSpecialtyDraft, setNewSpecialtyDraft] = useState('');
 
   const [spaces, setSpaces] = useState<string[]>(DEFAULT_HOTEL_SPACES);
   const [amenities, setAmenities] = useState<string[]>(DEFAULT_HOTEL_AMENITIES);
@@ -171,6 +225,10 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
   const [bathrooms, setBathrooms] = useState<number | undefined>(4);
   const [bedrooms, setBedrooms] = useState<number | undefined>(2);
   const [majlis, setMajlis] = useState<number | undefined>(1);
+  const [bathroomImages, setBathroomImages] = useState<string[]>([]);
+  const [bedroomImages, setBedroomImages] = useState<string[]>([]);
+  const [majlisImages, setMajlisImages] = useState<string[]>([]);
+  const [spaceImages, setSpaceImages] = useState<Record<string, string[]>>({});
   /** Playground: total players (shown as N max (N/2 × N/2)). */
   const [maxPlayers, setMaxPlayers] = useState<number | undefined>(12);
   /** Playground length / height in meters. */
@@ -265,13 +323,22 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
   const isHall = facilityKind === 'hall';
   const isSport = facilityKind === 'sport';
   const isPool = facilityKind === 'pool';
+  const isGym = facilityKind === 'gym';
   const isHealth = facilityKind === 'health';
   const isSalon = facilityKind === 'salon';
   const isCar = facilityKind === 'car';
+  const isTransport = facilityKind === 'transport';
+  const isApparel = facilityKind === 'apparel';
+  const isCatalog = isCar || isTransport || isApparel;
   const isArtist = facilityKind === 'artist';
   const isPhoto = facilityKind === 'photo';
   const stayNoun = isTairaman ? 'طيرمان' : 'شاليه';
   const stayNounPlural = isTairaman ? 'الطيرمانات' : 'الشاليهات';
+  const catalogNoun = isApparel
+    ? 'المنتجات'
+    : isTransport
+      ? 'المركبات'
+      : 'السيارات';
   const serviceDefaults =
     facilityKind in SERVICE_FACILITY_DEFAULTS
       ? SERVICE_FACILITY_DEFAULTS[
@@ -284,12 +351,13 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
     isHall ||
     isSport ||
     isPool ||
+    isGym ||
     isHealth ||
     isSalon ||
-    isCar ||
+    isCatalog ||
     isArtist ||
     isPhoto;
-  const showInsuranceFields = isChalet || isHall || isCar;
+  const showInsuranceFields = isChalet || isHall || isCatalog;
   const playersPerSide =
     maxPlayers != null && maxPlayers > 0 ? Math.floor(maxPlayers / 2) : undefined;
   const showSubCategoryField =
@@ -379,21 +447,38 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
       setMaxPlayers(30);
       return;
     }
-    if (
-      kind === 'health' ||
-      kind === 'salon' ||
-      kind === 'car' ||
-      kind === 'artist' ||
-      kind === 'photo' ||
-      kind === 'supply'
-    ) {
-      const d = SERVICE_FACILITY_DEFAULTS[kind];
+    if (kind === 'gym') {
+      const d = SERVICE_FACILITY_DEFAULTS.gym;
       setSpaces(d.spaces);
       setAmenities(d.amenities);
       setDepositNote(d.depositNote);
       setTermsText(listToLines(d.terms));
       resetExtra();
-      if (kind === 'car') {
+      return;
+    }
+    if (
+      kind === 'health' ||
+      kind === 'salon' ||
+      kind === 'car' ||
+      kind === 'transport' ||
+      kind === 'apparel' ||
+      kind === 'artist' ||
+      kind === 'photo' ||
+      kind === 'supply'
+    ) {
+      const d = SERVICE_FACILITY_DEFAULTS[kind];
+      // Catalog shops: spaces/amenities live on each product, not the facility.
+      if (kind === 'car' || kind === 'transport' || kind === 'apparel') {
+        setSpaces([]);
+        setAmenities([]);
+      } else {
+        setSpaces(d.spaces);
+        setAmenities(d.amenities);
+      }
+      setDepositNote(d.depositNote);
+      setTermsText(listToLines(d.terms));
+      resetExtra();
+      if (kind === 'car' || kind === 'transport') {
         setInsuranceNote(DEFAULT_CAR_INSURANCE_NOTE);
       }
     }
@@ -453,6 +538,8 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
           const a = strList(attrs, 'amenities');
           const t = strList(attrs, 'terms');
           const p = strList(attrs, 'policyBullets');
+          const portfolioUrls = strList(attrs, 'portfolio');
+          if (portfolioUrls.length) setPortfolio(portfolioUrls);
           if (s.length) setSpaces(s);
           if (a.length) setAmenities(a);
           if (typeof attrs.depositNote === 'string' && attrs.depositNote.trim()) {
@@ -475,6 +562,10 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
             toOptionalNum(attrs.bedrooms) ?? toOptionalNum(attrs.rooms),
           );
           setMajlis(toOptionalNum(attrs.majlis));
+          setBathroomImages(urlList(attrs, 'bathroomImages'));
+          setBedroomImages(urlList(attrs, 'bedroomImages'));
+          setMajlisImages(urlList(attrs, 'majlisImages'));
+          setSpaceImages(imageMap(attrs, 'spaceImages'));
           setMaxPlayers(
             toOptionalNum(attrs.maxPlayers) ??
               toOptionalNum(attrs.players) ??
@@ -499,6 +590,34 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
           if (typeof attrs.tourUrl === 'string') {
             setTourUrl(attrs.tourUrl);
           }
+          if (typeof attrs.specialty === 'string' && attrs.specialty.trim()) {
+            setSpecialty(attrs.specialty.trim());
+          }
+          const savedLocUrl =
+            typeof attrs.locationUrl === 'string' ? attrs.locationUrl.trim() : '';
+          setLocationUrl(savedLocUrl);
+          const lat =
+            typeof me.latitude === 'number' && Number.isFinite(me.latitude)
+              ? me.latitude
+              : null;
+          const lng =
+            typeof me.longitude === 'number' && Number.isFinite(me.longitude)
+              ? me.longitude
+              : null;
+          if (lat != null && lng != null) {
+            setLocationLat(lat);
+            setLocationLng(lng);
+          } else if (savedLocUrl) {
+            const parsed = parseYemenMapsUrl(savedLocUrl) ?? parseMapsUrl(savedLocUrl);
+            if (parsed) {
+              setLocationLat(parsed.latitude);
+              setLocationLng(parsed.longitude);
+            }
+          } else {
+            setLocationLat(null);
+            setLocationLng(null);
+          }
+          setLocationError(null);
           applyFacilityStatus(me);
           defaultsAppliedFor.current = `loaded:${me.id}`;
         } else {
@@ -530,6 +649,57 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
     };
   }, [container, providerId]);
 
+  useEffect(() => {
+    if (!isHealth) return;
+    let cancelled = false;
+    void container.providerApi
+      .listMedicalSpecialties()
+      .then((list) => {
+        if (cancelled) return;
+        const names = list.map((s) => s.name).filter(Boolean);
+        if (!names.some((n) => n === GENERAL_MEDICAL_SPECIALTY)) {
+          names.unshift(GENERAL_MEDICAL_SPECIALTY);
+        }
+        setSpecialties(names);
+      })
+      .catch(() => {
+        if (!cancelled) setSpecialties([GENERAL_MEDICAL_SPECIALTY]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [container.providerApi, isHealth]);
+
+  const applyLocationUrl = useCallback((raw: string) => {
+    setLocationUrl(raw);
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      setLocationLat(null);
+      setLocationLng(null);
+      setLocationError(null);
+      return;
+    }
+    const yemen = parseYemenMapsUrl(trimmed);
+    if (yemen) {
+      setLocationLat(yemen.latitude);
+      setLocationLng(yemen.longitude);
+      setLocationError(null);
+      return;
+    }
+    const any = parseMapsUrl(trimmed);
+    if (any) {
+      setLocationLat(null);
+      setLocationLng(null);
+      setLocationError('الموقع خارج اليمن — الصق رابط موقع داخل اليمن');
+      return;
+    }
+    setLocationLat(null);
+    setLocationLng(null);
+    setLocationError(
+      'تعذر قراءة الإحداثيات من الرابط. الصق رابط Google Maps أو OpenStreetMap يحتوي على الموقع (ليس رابطاً مختصراً).',
+    );
+  }, []);
+
   const submit = useCallback(async () => {
     if (!businessName.trim()) {
       setError('أدخل اسم المنشأة');
@@ -551,7 +721,7 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
       setError('أدخل الحد الأقصى للأشخاص');
       return;
     }
-    if (isChalet && !isTairaman && (!inventory || inventory < 1)) {
+    if (isChalet && (!inventory || inventory < 1)) {
       setError(`أدخل عدد ${stayNounPlural} المتاحة`);
       return;
     }
@@ -563,6 +733,13 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
       setError('أدخل الحد الأقصى لمرتادي المسبح');
       return;
     }
+    if (locationUrl.trim() && (locationLat == null || locationLng == null)) {
+      setError(
+        locationError ??
+          'رابط الموقع غير صالح — الصق رابط خريطة لموقع داخل اليمن',
+      );
+      return;
+    }
     const parsedLength = parseOptionalAmount(fieldLength);
     const parsedWidth = parseOptionalAmount(fieldWidth);
     if (isSport && (parsedLength == null || parsedLength <= 0)) {
@@ -571,6 +748,10 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
     }
     if (isSport && (parsedWidth == null || parsedWidth <= 0)) {
       setError('أدخل عرض الملعب بالمتر');
+      return;
+    }
+    if (isHealth && !specialty.trim()) {
+      setError('اختر تخصص العيادة أو أضف تخصصاً جديداً (أو اختر عام)');
       return;
     }
     setSaving(true);
@@ -597,14 +778,22 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
       }
     };
 
-    const detailBase = (fallbackDeposit: string) => ({
-      ...existingAttributes,
-      spaces: cleanList(spaces),
-      amenities: cleanList(amenities),
-      depositNote: depositNote.trim() || fallbackDeposit,
-      terms: linesToList(termsText),
-      policyBullets: linesToList(policyText),
-    });
+    const detailBase = (fallbackDeposit: string) => {
+      const base: Record<string, unknown> = {
+        ...existingAttributes,
+        spaces: cleanList(spaces),
+        amenities: cleanList(amenities),
+        depositNote: depositNote.trim() || fallbackDeposit,
+        terms: linesToList(termsText),
+        policyBullets: linesToList(policyText),
+      };
+      if (isPhoto) {
+        const works = portfolio.filter((u) => typeof u === 'string' && u.trim());
+        if (works.length) base.portfolio = works;
+        else delete base.portfolio;
+      }
+      return base;
+    };
 
     let attributes: Record<string, unknown> | undefined;
     if (isHotel) {
@@ -613,21 +802,20 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
       attributes = detailBase(
         isTairaman ? DEFAULT_TAIRAMAN_DEPOSIT : DEFAULT_CHALET_DEPOSIT,
       );
-      // Capacity + unit count live on each package for طيرمانات.
+      // Unit count lives on the facility for شاليهات + طيرمانات.
+      // Persons capacity for طيرمانات still lives on each package.
+      const units = Math.max(1, Math.floor(Number(inventory)));
+      attributes.inventory = units;
+      attributes.units = units;
       if (!isTairaman) {
         const guests = Math.max(1, Math.floor(Number(maxGuests)));
-        const units = Math.max(1, Math.floor(Number(inventory)));
         attributes.maxGuests = guests;
         attributes.capacity = guests;
         attributes.guests = guests;
-        attributes.inventory = units;
-        attributes.units = units;
       } else {
         delete attributes.maxGuests;
         delete attributes.capacity;
         delete attributes.guests;
-        delete attributes.inventory;
-        delete attributes.units;
       }
       if (bathrooms != null && bathrooms > 0) attributes.bathrooms = bathrooms;
       if (bedrooms != null && bedrooms > 0) {
@@ -635,6 +823,18 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
         attributes.rooms = bedrooms;
       }
       if (majlis != null && majlis > 0) attributes.majlis = majlis;
+      const bathPics = bathroomImages.filter((u) => u.trim());
+      const bedPics = bedroomImages.filter((u) => u.trim());
+      const majlisPics = majlisImages.filter((u) => u.trim());
+      if (bathPics.length) attributes.bathroomImages = bathPics;
+      else delete attributes.bathroomImages;
+      if (bedPics.length) attributes.bedroomImages = bedPics;
+      else delete attributes.bedroomImages;
+      if (majlisPics.length) attributes.majlisImages = majlisPics;
+      else delete attributes.majlisImages;
+      const prunedSpaces = pruneImageMap(spaceImages, spaces);
+      if (prunedSpaces) attributes.spaceImages = prunedSpaces;
+      else delete attributes.spaceImages;
       applyOptionalInsurance(attributes);
       if (tourUrl.trim()) attributes.tourUrl = tourUrl.trim();
       else delete attributes.tourUrl;
@@ -668,21 +868,65 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
         capacity: swimmers,
         guests: swimmers,
       };
+    } else if (isGym) {
+      attributes = detailBase(SERVICE_FACILITY_DEFAULTS.gym.depositNote);
     } else if (isHealth || isSalon || isArtist || isPhoto) {
       attributes = detailBase(
         depositNote.trim() || serviceDefaults?.depositNote || 'سياسة العربون',
       );
+      if (isHealth) {
+        const nextSpecialty = specialty.trim().replace(/\s+/g, ' ');
+        attributes.specialty = nextSpecialty;
+        await container.providerApi
+          .ensureMedicalSpecialty(nextSpecialty)
+          .catch(() => null);
+      }
     } else if (isCar) {
       attributes = detailBase(SERVICE_FACILITY_DEFAULTS.car.depositNote);
+      delete attributes.spaces;
+      delete attributes.amenities;
       applyOptionalInsurance(attributes);
+    } else if (isTransport) {
+      attributes = detailBase(SERVICE_FACILITY_DEFAULTS.transport.depositNote);
+      delete attributes.spaces;
+      delete attributes.amenities;
+      applyOptionalInsurance(attributes);
+    } else if (isApparel) {
+      attributes = detailBase(SERVICE_FACILITY_DEFAULTS.apparel.depositNote);
+      delete attributes.spaces;
+      delete attributes.amenities;
+      applyOptionalInsurance(attributes);
+    }
+
+    // Persist maps share URL + coords (Yemen facilities).
+    if (!attributes) {
+      attributes = { ...existingAttributes };
+    }
+    const trimmedLoc = locationUrl.trim();
+    if (trimmedLoc && locationLat != null && locationLng != null) {
+      attributes.locationUrl = trimmedLoc;
+    } else {
+      delete attributes.locationUrl;
     }
 
     const payload = {
       businessName: businessName.trim(),
       description: description.trim() || undefined,
       addressDetails: addressDetails.trim() || undefined,
+      // Always send coords so clearing the URL can reset them on the server.
+      latitude: locationLat,
+      longitude: locationLng,
       cancellationPolicy:
-        isHotel || isChalet || isHall || isCar || isArtist || isHealth || isSalon || isPhoto || isPool
+        isHotel ||
+        isChalet ||
+        isHall ||
+        isCatalog ||
+        isArtist ||
+        isHealth ||
+        isSalon ||
+        isPhoto ||
+        isPool ||
+        isGym
           ? depositNote.trim() || undefined
           : undefined,
       ...(isEdit
@@ -698,18 +942,28 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
     try {
       if (isEdit && providerId) {
         await container.providerApi.updateMine(providerId, payload);
-        // Propagate facility unit count to all package calendars (chalets only —
-        // طيرمانات set capacity per package).
-        if (isChalet && !isTairaman) {
+        // Propagate facility unit count to all package calendars.
+        if (isChalet) {
           const units = Math.max(1, Math.floor(Number(inventory)));
           const services = await container.serviceApi.listMine(providerId);
           await Promise.all(
-            services.map((s) =>
-              container.serviceApi.seedAvailabilities(s.id, {
+            services.map((s) => {
+              const attrs = (s.attributes ?? {}) as Record<string, unknown>;
+              const hourly =
+                attrs.pricingMode === 'HOURLY' ||
+                (Array.isArray(attrs.pricePeriods) &&
+                  attrs.pricePeriods.length > 0);
+              if (hourly) {
+                return container.serviceApi.seedHourlyAvailabilities(s.id, {
+                  days: 14,
+                  totalCapacity: units,
+                });
+              }
+              return container.serviceApi.seedAvailabilities(s.id, {
                 days: 90,
                 totalCapacity: units,
-              }),
-            ),
+              });
+            }),
           );
         }
         navigation.goBack();
@@ -729,9 +983,15 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
     }
   }, [
     addressDetails,
+    locationUrl,
+    locationLat,
+    locationLng,
+    locationError,
     amenities,
     bathrooms,
+    bathroomImages,
     bedrooms,
+    bedroomImages,
     businessName,
     maxGuests,
     inventory,
@@ -744,23 +1004,31 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
     description,
     existingAttributes,
     images,
+    portfolio,
     insuranceAmount,
     insuranceMeta,
     insuranceNote,
+    isApparel,
     isArtist,
     isCar,
+    isCatalog,
     isChalet,
+    isTransport,
     isEdit,
     isHall,
     isHealth,
     isHotel,
     isPhoto,
     isPool,
+    isGym,
     isSalon,
     isSport,
     isTairaman,
+    specialty,
     stayNounPlural,
     majlis,
+    majlisImages,
+    spaceImages,
     maxPlayers,
     fieldLength,
     fieldWidth,
@@ -854,17 +1122,23 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
               ? 'إضافة ملعب'
               : isPool
                 ? 'إضافة مسبح'
-                : isHealth
-                  ? 'إضافة منشأة صحية'
-                  : isSalon
-                    ? 'إضافة صالون'
-                    : isCar
-                      ? 'إضافة تأجير سيارات'
-                      : isArtist
-                        ? 'إضافة فنان / زفّة'
-                        : isPhoto
-                          ? 'إضافة تصوير'
-                          : 'منشأة جديدة';
+                : isGym
+                  ? 'إضافة نادي رياضي'
+                  : isHealth
+                    ? 'إضافة منشأة صحية'
+                    : isSalon
+                      ? 'إضافة صالون'
+                      : isCatalog
+                        ? isApparel
+                          ? 'إضافة تأجير ملبوسات'
+                          : isTransport
+                            ? 'إضافة نقليات'
+                            : 'إضافة تأجير سيارات'
+                        : isArtist
+                          ? 'إضافة فنان / زفّة'
+                          : isPhoto
+                            ? 'إضافة تصوير'
+                            : 'منشأة جديدة';
 
   return (
     <SafeAreaView
@@ -885,6 +1159,14 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
         bottomOffset={72}
       >
         <CloudinaryImagePicker urls={images} onChange={setImages} label="صور المنشأة" />
+        {isPhoto ? (
+          <CloudinaryImagePicker
+            urls={portfolio}
+            onChange={setPortfolio}
+            max={16}
+            label="أعمال سابقة (معرض الأعمال)"
+          />
+        ) : null}
 
         <View style={styles.card}>
           <View style={styles.field}>
@@ -906,13 +1188,19 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
                           ? 'مثال: صالون الأناقة'
                           : isPool
                             ? 'مثال: مسبح الأهلي'
-                            : isCar
-                              ? 'مثال: تأجير سيارات الأمانة'
-                              : isArtist
-                                ? 'مثال: فرقة الفرح'
-                                : isPhoto
-                                  ? 'مثال: استوديو لمسة'
-                                  : 'اسم المنشأة'
+                            : isGym
+                              ? 'مثال: نادي القوة'
+                              : isCatalog
+                                ? isApparel
+                                  ? 'مثال: أناقة للتأجير'
+                                  : isTransport
+                                    ? 'مثال: نقليات الأمانة'
+                                    : 'مثال: تأجير سيارات الأمانة'
+                                : isArtist
+                                  ? 'مثال: فرقة الفرح'
+                                  : isPhoto
+                                    ? 'مثال: استوديو لمسة'
+                                    : 'اسم المنشأة'
               }
               placeholderTextColor={theme.colors.textSecondary}
               textAlign="right"
@@ -1017,6 +1305,67 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
           </View>
 
           <View style={styles.field}>
+            <Text style={styles.label}>رابط الموقع على الخريطة</Text>
+            <Text style={styles.hintInline}>
+              الصق رابط Google Maps أو OpenStreetMap لموقع المنشأة داخل اليمن
+            </Text>
+            <TextInput
+              style={styles.input}
+              value={locationUrl}
+              onChangeText={applyLocationUrl}
+              placeholder="https://maps.google.com/… أو openstreetmap.org/…"
+              placeholderTextColor={theme.colors.textSecondary}
+              textAlign="left"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+            />
+            {locationError ? (
+              <Text style={styles.locationError}>{locationError}</Text>
+            ) : null}
+            {locationLat != null && locationLng != null ? (
+              <View style={{ marginTop: 10 }}>
+                <FacilityMapCard
+                  latitude={locationLat}
+                  longitude={locationLng}
+                  height={140}
+                  label="معاينة الموقع"
+                />
+              </View>
+            ) : (
+              <Text style={styles.hintInline}>
+                إن لم يُحدد الرابط، تظهر المنشأة حول{' '}
+                {selectedCity?.name ?? 'صنعاء'} على خريطة البحث
+              </Text>
+            )}
+          </View>
+
+          {isHealth ? (
+            <View style={styles.field}>
+              <Text style={styles.label}>التخصص</Text>
+              <Pressable
+                style={styles.select}
+                onPress={() => setSpecialtyPickerOpen(true)}
+              >
+                <Ionicons
+                  name="chevron-down"
+                  size={18}
+                  color={theme.colors.textSecondary}
+                />
+                <Text
+                  style={[
+                    styles.selectValue,
+                    !specialty.trim() && styles.selectPlaceholder,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {specialty.trim() || 'اختر التخصص (أو عام)'}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          <View style={styles.field}>
             <Text style={styles.label}>
               {isHotel
                 ? 'عن الفنادق (الوصف)'
@@ -1028,17 +1377,19 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
                       ? 'عن الملعب (الوصف)'
                       : isPool
                         ? 'عن المسبح (الوصف)'
-                        : isHealth
-                          ? 'عن المنشأة الصحية (الوصف)'
-                          : isSalon
-                            ? 'عن الصالون (الوصف)'
-                            : isCar
-                              ? 'عن السيارات (الوصف)'
-                              : isArtist
-                                ? 'عن الفنان (الوصف)'
-                                : isPhoto
-                                  ? 'عن جلسة التصوير (الوصف)'
-                                  : 'الوصف'}
+                        : isGym
+                          ? 'عن النادي (الوصف)'
+                          : isHealth
+                            ? 'عن المنشأة الصحية (الوصف)'
+                            : isSalon
+                              ? 'عن الصالون (الوصف)'
+                              : isCatalog
+                                ? `عن ${catalogNoun} (الوصف)`
+                                : isArtist
+                                  ? 'عن الفنان (الوصف)'
+                                  : isPhoto
+                                    ? 'عن جلسة التصوير (الوصف)'
+                                    : 'الوصف'}
             </Text>
             <TextInput
               style={[styles.input, styles.textArea]}
@@ -1055,12 +1406,18 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
                         ? 'مثال: ملعب عشبي بإضاءة كاملة'
                         : isPool
                           ? 'مثال: مسبح أولمبي مع غرف تبديل'
-                          : isHealth
-                            ? 'مثال: عيادة متخصصة مع مواعيد يومية'
-                            : isSalon
-                              ? 'مثال: قص وصبغ وعناية بالبشرة'
-                              : isCar
-                                ? 'مثال: سيارات حديثة مع تأمين شامل'
+                          : isGym
+                            ? 'مثال: صالة أوزان وكاردو مع مدربين'
+                            : isHealth
+                              ? 'مثال: عيادة متخصصة مع مواعيد يومية'
+                              : isSalon
+                                ? 'مثال: قص وصبغ وعناية بالبشرة'
+                              : isCatalog
+                                ? isApparel
+                                  ? 'مثال: فساتين سهرات وبدل رسمية للتأجير اليومي'
+                                  : isTransport
+                                    ? 'مثال: باصات ومركبات نقل حديثة'
+                                    : 'مثال: سيارات حديثة مع تأمين شامل'
                                 : isArtist
                                   ? 'مثال: زفّة تقليدية مع صوتيات'
                                   : isPhoto
@@ -1121,30 +1478,38 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
                       ? 'تفاصيل صفحة الملعب'
                       : isPool
                         ? 'تفاصيل صفحة المسبح'
-                        : isHealth
-                          ? 'تفاصيل المنشأة الصحية'
-                          : isSalon
-                            ? 'تفاصيل الصالون'
-                            : isCar
-                              ? 'تفاصيل تأجير السيارات'
-                              : isArtist
-                                ? 'تفاصيل صفحة الفنان'
-                                : isPhoto
-                                  ? 'تفاصيل جلسة التصوير'
-                                  : 'تفاصيل الصفحة'}
+                        : isGym
+                          ? 'تفاصيل صفحة النادي'
+                          : isHealth
+                            ? 'تفاصيل المنشأة الصحية'
+                            : isSalon
+                              ? 'تفاصيل الصالون'
+                              : isCatalog
+                                ? `تفاصيل تأجير ${catalogNoun}`
+                                : isArtist
+                                  ? 'تفاصيل صفحة الفنان'
+                                  : isPhoto
+                                    ? 'تفاصيل جلسة التصوير'
+                                    : 'تفاصيل الصفحة'}
             </Text>
             <Text style={styles.hint}>
               {isHotel
                 ? 'الغرف تُضاف لاحقاً كخدمات داخل المنشأة عبر «إضافة غرفة».'
                 : isChalet || isHall || isArtist
                   ? 'الباقات تُضاف لاحقاً كخدمات داخل المنشأة عبر «إضافة باقة».'
-                  : isSport || isPool
+                  : isSport
                     ? 'فترات الأسعار تُضاف لاحقاً كخدمة داخل المنشأة.'
-                    : isHealth || isSalon || isPhoto
-                      ? 'الخدمات والمواعيد تُضاف لاحقاً داخل المنشأة مع مدة كل خدمة.'
-                      : isCar
-                        ? 'السيارات تُضاف لاحقاً كخدمات داخل المنشأة (مقاعد، موديل، ناقل…).'
-                        : 'أضف التفاصيل التي تظهر للعميل في صفحة المنشأة.'}
+                    : isPool
+                      ? 'باقات اليوم الكامل أو فترات الساعة تُضاف لاحقاً داخل المنشأة عبر «إضافة باقة».'
+                      : isGym
+                        ? 'باقات الاشتراك (بالأيام أو الأشهر) تُضاف لاحقاً داخل المنشأة عبر «إضافة باقة».'
+                        : isHealth || isSalon || isPhoto
+                          ? 'الخدمات والمواعيد تُضاف لاحقاً داخل المنشأة مع مدة كل خدمة.'
+                          : isCatalog
+                            ? isApparel
+                              ? 'المنتجات تُضاف لاحقاً داخل المنشأة مع المقاس واللون ووسائل الراحة وسعر اليوم — وتظهر مباشرة في التصنيف.'
+                              : `${catalogNoun} تُضاف لاحقاً داخل المنشأة مع المواصفات ووسائل الراحة وسعر اليوم — وتظهر للعميل مباشرة في التصنيف.`
+                            : 'أضف التفاصيل التي تظهر للعميل في صفحة المنشأة.'}
             </Text>
 
             {isSport ? (
@@ -1222,42 +1587,95 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
                 <Text style={styles.subSection}>مواصفات ال{stayNoun}</Text>
                 <View style={styles.steppers}>
                   {!isTairaman ? (
-                    <>
-                      <QuantityStepper
-                        label="الحد الأقصى لعدد الأشخاص"
-                        value={maxGuests}
-                        onChange={setMaxGuests}
-                        min={1}
-                      />
-                      <QuantityStepper
-                        label={`عدد ${stayNounPlural} المتاحة`}
-                        value={inventory}
-                        onChange={(n) => setInventory(Math.max(1, n ?? 1))}
-                        min={1}
-                      />
-                    </>
+                    <QuantityStepper
+                      label="الحد الأقصى لعدد الأشخاص"
+                      value={maxGuests}
+                      onChange={setMaxGuests}
+                      min={1}
+                    />
                   ) : (
                     <Text style={styles.hintInline}>
-                      عدد الأشخاص وعدد الطيرمانات المتاحة يُحددان داخل كل باقة.
+                      سعة الأشخاص تُحدد داخل كل باقة. عدد الطيرمانات المتاحة
+                      يُضبط هنا للمنشأة.
                     </Text>
                   )}
+                  <QuantityStepper
+                    label={`عدد ${stayNounPlural} المتاحة`}
+                    value={inventory}
+                    onChange={(n) => setInventory(Math.max(1, n ?? 1))}
+                    min={1}
+                  />
                   <QuantityStepper
                     label="حمامات"
                     value={bathrooms}
                     onChange={setBathrooms}
                     min={0}
+                    accessory={
+                      <CompactImageAttach
+                        urls={bathroomImages}
+                        onChange={setBathroomImages}
+                        max={8}
+                        showThumbs={false}
+                      />
+                    }
+                    accessoryFooter={
+                      bathroomImages.length ? (
+                        <CompactImageAttach
+                          urls={bathroomImages}
+                          onChange={setBathroomImages}
+                          max={8}
+                          showButton={false}
+                        />
+                      ) : null
+                    }
                   />
                   <QuantityStepper
                     label="غرف نوم"
                     value={bedrooms}
                     onChange={setBedrooms}
                     min={0}
+                    accessory={
+                      <CompactImageAttach
+                        urls={bedroomImages}
+                        onChange={setBedroomImages}
+                        max={8}
+                        showThumbs={false}
+                      />
+                    }
+                    accessoryFooter={
+                      bedroomImages.length ? (
+                        <CompactImageAttach
+                          urls={bedroomImages}
+                          onChange={setBedroomImages}
+                          max={8}
+                          showButton={false}
+                        />
+                      ) : null
+                    }
                   />
                   <QuantityStepper
                     label="مجالس"
                     value={majlis}
                     onChange={setMajlis}
                     min={0}
+                    accessory={
+                      <CompactImageAttach
+                        urls={majlisImages}
+                        onChange={setMajlisImages}
+                        max={8}
+                        showThumbs={false}
+                      />
+                    }
+                    accessoryFooter={
+                      majlisImages.length ? (
+                        <CompactImageAttach
+                          urls={majlisImages}
+                          onChange={setMajlisImages}
+                          max={8}
+                          showButton={false}
+                        />
+                      ) : null
+                    }
                   />
                 </View>
 
@@ -1278,71 +1696,104 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
               </>
             ) : null}
 
-            <DynamicLineList
-              label={
-                isSport
-                  ? 'مرافق الملعب'
-                  : isPool
-                    ? 'مرافق المسبح'
-                    : 'المساحات المتوفرة'
-              }
-              hint={
-                isSport
-                  ? 'مثال: إضاءة، كرات، مدرج'
-                  : isPool
-                    ? 'مثال: غرف تبديل، دشات، موقف'
-                    : isChalet
-                      ? 'مثال: استيم، ساونا، سينما، مسبح كبار'
-                      : isHall
-                        ? 'مثال: موقف سيارات خارجي، مسرح، حديقة'
-                        : isHealth
-                          ? 'مثال: غرفة انتظار، مواقف'
-                          : isSalon
-                            ? 'مثال: منطقة انتظار'
-                            : isCar
-                              ? 'مثال: مواقف التسليم'
-                              : isArtist
-                                ? 'مثال: منطقة تجهيز'
-                                : isPhoto
-                                  ? 'مثال: استوديو، خلفية تصوير'
-                                  : 'مثال: موقف سيارات، مسبح…'
-              }
-              items={spaces}
-              onChange={setSpaces}
-              placeholder="اسم المساحة"
-              addLabel="إضافة"
-            />
+            {!isCatalog ? (
+              <DynamicLineList
+                label={
+                  isSport
+                    ? 'مرافق الملعب'
+                    : isPool
+                      ? 'مرافق المسبح'
+                      : isGym
+                        ? 'مرافق النادي'
+                        : 'المساحات المتوفرة'
+                }
+                hint={
+                  isSport
+                    ? 'مثال: إضاءة، كرات، مدرج'
+                    : isPool
+                      ? 'مثال: غرف تبديل، دشات، موقف'
+                      : isGym
+                        ? 'مثال: صالة أوزان، غرف تبديل، موقف'
+                        : isChalet
+                          ? 'مثال: استيم، ساونا، سينما، مسبح كبار'
+                          : isHall
+                            ? 'مثال: موقف سيارات خارجي، مسرح، حديقة'
+                            : isHealth
+                              ? 'مثال: غرفة انتظار، مواقف'
+                              : isSalon
+                                ? 'مثال: منطقة انتظار'
+                                : isArtist
+                                  ? 'مثال: منطقة تجهيز'
+                                  : isPhoto
+                                    ? 'مثال: استوديو، خلفية تصوير'
+                                    : 'مثال: موقف سيارات، مسبح…'
+                }
+                items={spaces}
+                onChange={setSpaces}
+                placeholder="اسم المساحة"
+                addLabel="إضافة"
+                renderAccessory={
+                  isChalet
+                    ? (label) => {
+                        const key = label.trim();
+                        if (!key) return null;
+                        return (
+                          <CompactImageAttach
+                            urls={spaceImages[key] ?? []}
+                            onChange={(urls) =>
+                              setSpaceImages((prev) => {
+                                const next = { ...prev };
+                                if (urls.length) next[key] = urls;
+                                else delete next[key];
+                                return next;
+                              })
+                            }
+                            max={8}
+                            size="small"
+                          />
+                        );
+                      }
+                    : undefined
+                }
+              />
+            ) : null}
 
-            <DynamicLineList
-              label={
-                isSport || isPool ? 'خدمات إضافية' : 'وسائل الراحة'
-              }
-              hint={
-                isSport
-                  ? 'مثال: غرف تبديل، موقف سيارات'
-                  : isPool
-                    ? 'مثال: منقذ، كراسي استراحة، واي فاي'
-                    : isChalet
-                      ? 'مثال: مطبخ، موقف خارجي، تدفئة، شاشات'
-                      : isHall
-                        ? 'مثال: صوتيات، تكييف، إضاءة (اختياري)'
-                        : isHealth
-                          ? 'مثال: تكييف، واي فاي، صيدلية قريبة'
-                          : isSalon
-                            ? 'مثال: تكييف، واي فاي، مواقف'
-                            : isCar
-                              ? 'مثال: تأمين أساسي، تكييف، GPS'
+            {!isCatalog ? (
+              <DynamicLineList
+                label={
+                  isSport || isPool || isGym ? 'خدمات إضافية' : 'وسائل الراحة'
+                }
+                hint={
+                  isSport
+                    ? 'مثال: غرف تبديل، موقف سيارات'
+                    : isPool
+                      ? 'مثال: منقذ، كراسي استراحة، واي فاي'
+                      : isGym
+                        ? 'مثال: مدرب، تكييف، واي فاي، دشات'
+                        : isChalet
+                          ? 'مثال: مطبخ، موقف خارجي، تدفئة، شاشات'
+                          : isHall
+                            ? 'مثال: صوتيات، تكييف، إضاءة (اختياري)'
+                            : isHealth
+                              ? 'مثال: تكييف، واي فاي، صيدلية قريبة'
+                              : isSalon
+                                ? 'مثال: تكييف، واي فاي، مواقف'
                               : isArtist
                                 ? 'مثال: صوتيات، إضاءة'
                                 : isPhoto
                                   ? 'مثال: إضاءة احترافية، تعديل صور'
                                   : 'مثال: واي فاي، تكييف…'
-              }
-              items={amenities}
-              onChange={setAmenities}
-              placeholder="وسيلة راحة"
-              addLabel="إضافة"
-            />
+                }
+                items={amenities}
+                onChange={setAmenities}
+                placeholder="وسيلة راحة"
+                addLabel="إضافة"
+              />
+            ) : (
+              <Text style={styles.hintInline}>
+                وسائل الراحة تُحدد داخل كل {isApparel ? 'منتج' : isTransport ? 'مركبة' : 'سيارة'} عند إضافتها.
+              </Text>
+            )}
 
             {!isSport ? (
             <View style={styles.field}>
@@ -1499,6 +1950,78 @@ export function ProviderFacilityFormScreen({ route, navigation }: Props) {
         </>
       ) : null}
 
+      {isHealth ? (
+        <>
+          <OptionPickerSheet
+            visible={specialtyPickerOpen}
+            title="التخصص"
+            subtitle="اختر تخصصاً محفوظاً، أو عام للمستشفيات والعيادات العامة"
+            options={specialties.map((name) => ({ id: name, name }))}
+            selectedId={specialty.trim() || null}
+            onClose={() => setSpecialtyPickerOpen(false)}
+            onSelect={(opt) => setSpecialty(String(opt.name))}
+            actionLabel="+ إضافة تخصص جديد"
+            onAction={() => {
+              setNewSpecialtyDraft('');
+              setAddingSpecialty(true);
+            }}
+          />
+
+          <SmoothBottomSheet
+            visible={addingSpecialty}
+            onClose={() => {
+              setAddingSpecialty(false);
+              setNewSpecialtyDraft('');
+            }}
+            sheetStyle={styles.specialtySheet}
+          >
+            <Text style={styles.specialtySheetTitle}>تخصص جديد</Text>
+            <Text style={styles.specialtySheetHint}>
+              يُحفظ التخصص ويظهر لاحقاً في قائمة الاختيار وفي تصفية الصحة.
+            </Text>
+            <TextInput
+              style={styles.input}
+              value={newSpecialtyDraft}
+              onChangeText={setNewSpecialtyDraft}
+              placeholder="مثال: جلدية"
+              placeholderTextColor={theme.colors.textSecondary}
+              textAlign="right"
+              autoFocus
+            />
+            <Pressable
+              style={styles.specialtySaveBtn}
+              onPress={() => {
+                const next = newSpecialtyDraft.trim().replace(/\s+/g, ' ');
+                if (!next) {
+                  setError('أدخل اسم التخصص');
+                  return;
+                }
+                setSpecialty(next);
+                setSpecialties((prev) => {
+                  if (
+                    prev.some(
+                      (s) => s.trim().toLowerCase() === next.toLowerCase(),
+                    )
+                  ) {
+                    return prev;
+                  }
+                  return [...prev, next].sort((a, b) => {
+                    if (a === GENERAL_MEDICAL_SPECIALTY) return -1;
+                    if (b === GENERAL_MEDICAL_SPECIALTY) return 1;
+                    return a.localeCompare(b, 'ar');
+                  });
+                });
+                setAddingSpecialty(false);
+                setNewSpecialtyDraft('');
+                setError(null);
+              }}
+            >
+              <Text style={styles.specialtySaveBtnText}>حفظ التخصص</Text>
+            </Pressable>
+          </SmoothBottomSheet>
+        </>
+      ) : null}
+
       <SmoothBottomSheet
         visible={disableSheetOpen}
         onClose={() => {
@@ -1608,6 +2131,12 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     marginTop: -4,
   },
+  locationError: {
+    fontSize: 12,
+    color: theme.colors.error,
+    textAlign: 'right',
+    lineHeight: 18,
+  },
   field: { gap: 8 },
   label: {
     fontSize: 13,
@@ -1661,6 +2190,38 @@ const styles = StyleSheet.create({
   selectPlaceholder: {
     color: theme.colors.textSecondary,
     fontWeight: '500',
+  },
+  specialtySheet: {
+    paddingHorizontal: 20,
+    paddingBottom: 28,
+    gap: 12,
+  },
+  specialtySheetTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: theme.colors.primary,
+    textAlign: 'right',
+    width: '100%',
+  },
+  specialtySheetHint: {
+    fontSize: 13,
+    color: theme.colors.textSecondary,
+    textAlign: 'right',
+    lineHeight: 20,
+    width: '100%',
+  },
+  specialtySaveBtn: {
+    height: 50,
+    borderRadius: 14,
+    backgroundColor: theme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+  },
+  specialtySaveBtnText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '800',
   },
   enableRow: {
     flexDirection: 'row',

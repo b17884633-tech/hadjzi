@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -8,6 +9,11 @@ import {
 } from '@nestjs/common';
 import { ProvidersService } from './providers.service';
 import { CreateProviderDto, UpdateProviderDto } from './dto/provider.dto';
+import {
+  CreateProviderOfferDto,
+  UpdateProviderOfferDto,
+} from './dto/provider-offer.dto';
+import { CreateMedicalSpecialtyDto } from './dto/medical-specialty.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { User } from '../users/entities/user.entity';
 import { Public } from '../../common/decorators/public.decorator';
@@ -51,6 +57,26 @@ export class ProvidersController {
     return this.providers.listMine(user.id);
   }
 
+  /** Must be before :id so the path is not treated as a UUID. */
+  @Public()
+  @Get('offers/active')
+  listActiveOffers() {
+    return this.providers.listActiveOfferFacilities();
+  }
+
+  /** Must be before :id so the path is not treated as a UUID. */
+  @Public()
+  @Get('medical-specialties')
+  listMedicalSpecialties() {
+    return this.providers.listMedicalSpecialties();
+  }
+
+  @Roles(UserRole.PROVIDER, UserRole.ADMIN)
+  @Post('medical-specialties')
+  createMedicalSpecialty(@Body() dto: CreateMedicalSpecialtyDto) {
+    return this.providers.ensureMedicalSpecialty(dto.name);
+  }
+
   @Roles(UserRole.PROVIDER, UserRole.ADMIN)
   @Get('me/:id')
   mineOne(@CurrentUser() user: User, @Param('id') id: string) {
@@ -75,6 +101,43 @@ export class ProvidersController {
     @Body() body: SetEnabledBody,
   ) {
     return this.providers.setEnabled(user.id, id, body.enabled, body.reason);
+  }
+
+  @Roles(UserRole.PROVIDER, UserRole.ADMIN)
+  @Get('me/:id/offers')
+  listOffers(@CurrentUser() user: User, @Param('id') id: string) {
+    return this.providers.listOffersOwned(user.id, id);
+  }
+
+  @Roles(UserRole.PROVIDER, UserRole.ADMIN)
+  @Post('me/:id/offers')
+  createOffer(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+    @Body() dto: CreateProviderOfferDto,
+  ) {
+    return this.providers.createOfferOwned(user.id, id, dto);
+  }
+
+  @Roles(UserRole.PROVIDER, UserRole.ADMIN)
+  @Patch('me/:id/offers/:offerId')
+  updateOffer(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+    @Param('offerId') offerId: string,
+    @Body() dto: UpdateProviderOfferDto,
+  ) {
+    return this.providers.updateOfferOwned(user.id, id, offerId, dto);
+  }
+
+  @Roles(UserRole.PROVIDER, UserRole.ADMIN)
+  @Delete('me/:id/offers/:offerId')
+  deleteOffer(
+    @CurrentUser() user: User,
+    @Param('id') id: string,
+    @Param('offerId') offerId: string,
+  ) {
+    return this.providers.deleteOfferOwned(user.id, id, offerId);
   }
 
   /** Legacy: updates the first facility. Prefer PATCH /providers/me/:id */

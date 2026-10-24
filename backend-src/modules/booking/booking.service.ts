@@ -27,6 +27,10 @@ import {
   DEFAULT_COMMISSION_PERCENTAGE,
   DEFAULT_DEPOSIT_PERCENTAGE,
 } from '../../common/constants/booking.constants';
+import { ProvidersService } from '../providers/providers.service';
+import { PushService } from '../push/push.service';
+import { AppNotification } from '../admin/entities/notification.entity';
+import { Provider } from '../providers/entities/provider.entity';
 
 function nightsBetween(checkIn: string | Date, checkOut: string | Date): number {
   const a = new Date(`${toDateKey(checkIn)}T12:00:00Z`).getTime();
@@ -48,6 +52,22 @@ function addDaysIso(iso: string, days: number): string {
   const d = new Date(`${toDateKey(iso)}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Longest stay a single booking may span. Every night is row-locked inside
+ * one transaction, so this bounds both lock count and transaction duration.
+ */
+const MAX_STAY_NIGHTS = 60;
+
+function assertStayLength(checkIn: string, checkOut: string | null) {
+  if (!checkOut) return;
+  const nights = nightsBetween(checkIn, checkOut);
+  if (nights > MAX_STAY_NIGHTS) {
+    throw new BadRequestException(
+      `الحد الأقصى لمدة الإقامة ${MAX_STAY_NIGHTS} ليلة`,
+    );
+  }
 }
 
 /**
@@ -89,9 +109,45 @@ export class BookingService {
   constructor(
     @InjectRepository(Booking)
     private readonly bookings: Repository<Booking>,
+    @InjectRepository(AppNotification)
+    private readonly notifications: Repository<AppNotification>,
+    @InjectRepository(Provider)
+    private readonly providerRepo: Repository<Provider>,
     private readonly dataSource: DataSource,
     private readonly config: ConfigService,
+    private readonly providers: ProvidersService,
+    private readonly push: PushService,
   ) {}
+
+  /** Apply an active facility offer when the stay date falls in the offer window. */
+  private async applyOfferDiscount(
+    providerId: string,
+    bookingDate: string,
+    rawTotal: number,
+  ): Promise<{
+    totalAmount: number;
+    discountPercent: number | null;
+    originalTotalAmount: number | null;
+  }> {
+    const offer = await this.providers.findActiveOfferForProvider(
+      providerId,
+      bookingDate,
+    );
+    const pct = offer ? Number(offer.discountPercent) : 0;
+    if (!offer || !Number.isFinite(pct) || pct <= 0) {
+      return {
+        totalAmount: rawTotal,
+        discountPercent: null,
+        originalTotalAmount: null,
+      };
+    }
+    const discounted = roundMoney(rawTotal * (1 - pct / 100));
+    return {
+      totalAmount: discounted,
+      discountPercent: pct,
+      originalTotalAmount: rawTotal,
+    };
+  }
 
   async create(user: User, dto: CreateBookingDto) {
     const quantity = dto.quantity ?? 1;
@@ -130,6 +186,7 @@ export class BookingService {
         dto.checkOutDate && toDateKey(dto.checkOutDate) > checkInDate
           ? toDateKey(dto.checkOutDate)
           : null;
+      assertStayLength(checkInDate, checkOut);
       const nightDates = eachBlockedDate(checkInDate, checkOut);
       // Per-night packages: price × nights (exclusive check-out).
       const nights = checkOut ? nightsBetween(checkInDate, checkOut) : 1;
@@ -146,7 +203,13 @@ export class BookingService {
       );
 
       const unitPrice = unitPriceForSlot(service, checkInSlot);
-      const totalAmount = roundMoney(unitPrice * quantity * nights);
+      const rawTotal = roundMoney(unitPrice * quantity * nights);
+      const priced = await this.applyOfferDiscount(
+        service.providerId,
+        checkInDate,
+        rawTotal,
+      );
+      const totalAmount = priced.totalAmount;
       const depositPercentage = Number(service.depositPercentage);
       const depositAmount = roundMoney((totalAmount * depositPercentage) / 100);
       const remainingAmount = roundMoney(totalAmount - depositAmount);
@@ -176,6 +239,8 @@ export class BookingService {
         endTime: checkInSlot.endTime,
         quantity,
         totalAmount,
+        discountPercent: priced.discountPercent,
+        originalTotalAmount: priced.originalTotalAmount,
         depositPercentage,
         depositAmount,
         remainingAmount,
@@ -254,6 +319,7 @@ export class BookingService {
         dto.checkOutDate && toDateKey(dto.checkOutDate) > checkInDate
           ? toDateKey(dto.checkOutDate)
           : null;
+      assertStayLength(checkInDate, checkOut);
       const nightDates = eachBlockedDate(checkInDate, checkOut);
       const stayNights = checkOut ? nightsBetween(checkInDate, checkOut) : 1;
 
@@ -281,7 +347,13 @@ export class BookingService {
       );
 
       const unitPrice = checkInSlot.customPrice ?? service.basePrice;
-      const totalAmount = roundMoney(unitPrice * quantity * stayNights);
+      const rawTotal = roundMoney(unitPrice * quantity * stayNights);
+      const priced = await this.applyOfferDiscount(
+        service.providerId,
+        checkInDate,
+        rawTotal,
+      );
+      const totalAmount = priced.totalAmount;
       const depositPercentage = Number(
         service.depositPercentage ?? DEFAULT_DEPOSIT_PERCENTAGE,
       );
@@ -312,6 +384,8 @@ export class BookingService {
         endTime: checkInSlot.endTime,
         quantity,
         totalAmount,
+        discountPercent: priced.discountPercent,
+        originalTotalAmount: priced.originalTotalAmount,
         depositPercentage,
         depositAmount,
         remainingAmount,
@@ -325,18 +399,23 @@ export class BookingService {
     });
   }
 
+  /** Newest bookings first; capped so a busy facility cannot pull its whole history per open. */
+  private static readonly MY_BOOKINGS_LIMIT = 300;
+
   async mine(user: User) {
     if (user.role === UserRole.PROVIDER) {
       return this.bookings.find({
         where: { provider: { userId: user.id } },
         relations: ['service', 'provider', 'availability', 'customer'],
         order: { createdAt: 'DESC' },
+        take: BookingService.MY_BOOKINGS_LIMIT,
       });
     }
     return this.bookings.find({
       where: { customerId: user.id },
       relations: ['service', 'provider', 'availability', 'review'],
       order: { createdAt: 'DESC' },
+      take: BookingService.MY_BOOKINGS_LIMIT,
     });
   }
 
@@ -365,9 +444,49 @@ export class BookingService {
   }
 
   async transition(bookingId: string, to: BookingStatus) {
-    return this.dataSource.transaction(async (manager) =>
+    const prev = await this.bookings.findOne({ where: { id: bookingId } });
+    const saved = await this.dataSource.transaction(async (manager) =>
       this.transitionWithManager(manager, bookingId, to),
     );
+    if (prev && prev.status !== saved.status) {
+      void this.notifyBookingStatus(saved, prev.status).catch(() => undefined);
+    }
+    return saved;
+  }
+
+  /** In-app + device push for customer and facility owner only. */
+  private async notifyBookingStatus(
+    booking: Booking,
+    fromStatus: BookingStatus,
+  ) {
+    const copy = bookingStatusNotice(booking, fromStatus);
+    if (!copy) return;
+
+    const recipientIds = new Set<string>();
+    if (booking.customerId) recipientIds.add(booking.customerId);
+    if (booking.providerId) {
+      const provider = await this.providerRepo.findOne({
+        where: { id: booking.providerId },
+        select: ['id', 'userId'],
+      });
+      if (provider?.userId) recipientIds.add(provider.userId);
+    }
+
+    for (const userId of recipientIds) {
+      const saved = await this.notifications.save(
+        this.notifications.create({
+          title: copy.title,
+          message: copy.message,
+          audience: 'USER',
+          kind: 'BOOKING_STATUS',
+          userId,
+          providerId: booking.providerId,
+          createdBy: null,
+          readAt: null,
+        }),
+      );
+      await this.push.notifyForAppNotification(saved);
+    }
   }
 
   /**
@@ -451,6 +570,15 @@ export class BookingService {
           );
           expired.push(locked.id);
         });
+        const expiredRow = await this.bookings.findOne({
+          where: { id: booking.id },
+        });
+        if (expiredRow?.status === BookingStatus.EXPIRED) {
+          void this.notifyBookingStatus(
+            expiredRow,
+            BookingStatus.PENDING_PAYMENT,
+          ).catch(() => undefined);
+        }
       } catch {
         // Another worker confirmed/expired this row — safe to skip.
       }
@@ -504,9 +632,12 @@ export class BookingService {
     quantity: number,
     checkInSlot: ServiceAvailability,
   ): Promise<ServiceAvailability[]> {
+    // Deterministic lock order (by service id, then date) so two concurrent
+    // bookings on the same facility cannot deadlock each other.
     const siblings = await manager.find(ServiceItem, {
       where: { providerId, status: RecordStatus.ACTIVE },
       select: ['id'],
+      order: { id: 'ASC' },
     });
     const serviceIds = siblings.length
       ? siblings.map((s) => s.id)
@@ -582,14 +713,16 @@ export class BookingService {
         })
       )?.providerId;
 
-    const serviceIds = new Set<string>([booking.serviceId]);
+    const serviceIdSet = new Set<string>([booking.serviceId]);
     if (providerId) {
       const siblings = await manager.find(ServiceItem, {
         where: { providerId, status: RecordStatus.ACTIVE },
         select: ['id'],
       });
-      for (const s of siblings) serviceIds.add(s.id);
+      for (const s of siblings) serviceIdSet.add(s.id);
     }
+    // Same lock order as lockStayNights.
+    const serviceIds = [...serviceIdSet].sort();
 
     for (const sid of serviceIds) {
       for (const date of nightDates) {
@@ -703,4 +836,40 @@ function unitPriceForSlot(
     if (Number.isFinite(price)) return price;
   }
   return Number(service.basePrice) || 0;
+}
+
+function bookingStatusNotice(
+  booking: Booking,
+  _from: BookingStatus,
+): { title: string; message: string } | null {
+  const ref = booking.bookingNumber || booking.id.slice(0, 8);
+  switch (booking.status) {
+    case BookingStatus.CONFIRMED:
+      return {
+        title: 'تم تأكيد الحجز',
+        message: `تم تأكيد الحجز ${ref}. راجع التفاصيل من حجوزاتك.`,
+      };
+    case BookingStatus.CANCELLED:
+      return {
+        title: 'تم إلغاء الحجز',
+        message: `تم إلغاء الحجز ${ref}.`,
+      };
+    case BookingStatus.COMPLETED:
+      return {
+        title: 'اكتمل الحجز',
+        message: `اكتمل الحجز ${ref}. يمكنك تقييم المنشأة إن رغبت.`,
+      };
+    case BookingStatus.EXPIRED:
+      return {
+        title: 'انتهت صلاحية الحجز',
+        message: `انتهت مهلة إتمام الدفع للحجز ${ref}.`,
+      };
+    case BookingStatus.REFUNDED:
+      return {
+        title: 'تم استرداد المبلغ',
+        message: `تم استرداد مبلغ الحجز ${ref}.`,
+      };
+    default:
+      return null;
+  }
 }

@@ -6,6 +6,7 @@ import {
 import { Provider, ServiceItem } from '../../../domain/model/Provider';
 import { colors } from '../../../core/ui/theme/colors';
 import {
+  isApparelCategory,
   isArtistCategory,
   isCarCategory,
   isChaletCategory,
@@ -13,13 +14,17 @@ import {
   isHealthCategory,
   isHotelCategory,
   isPhotoCategory,
+  isGymCategory,
   isPoolCategory,
   isSalonCategory,
   isSportCategory,
   isSupplyCategory,
   isTairamanCategory,
+  isTransportCategory,
+  resolveFacilityKind,
   SERVICE_FACILITY_DEFAULTS,
 } from '../categoryKinds';
+import { membershipLabel, type MembershipUnit } from '../../booking/bookingFlow';
 
 /** Detail palette — Hadjzi logo navy + gold. */
 export const DETAIL = {
@@ -50,23 +55,39 @@ export type FeatureChip = {
   key: string;
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
+  /** Optional detail photos — tapping the chip opens a gallery. */
+  images?: string[];
 };
 
 export type IconRow = {
   key: string;
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
+  /** Optional photos for this space/amenity row. */
+  images?: string[];
 };
 
 export type PricePackage = {
   id: string;
   title: string;
+  /** Short package detail (e.g. photographer packages). */
+  detail?: string;
   price: number;
   capacityLabel?: string;
   timeLabel?: string;
   period?: 'MORNING' | 'EVENING' | 'PER_NIGHT';
   fromTime?: string;
   toTime?: string;
+  /** Tairaman / sports-style hourly package — price is per hour. */
+  pricingMode?: 'FIXED' | 'HOURLY' | 'DAILY';
+  /** Display unit for catalog rentals (cars / transport / apparel). */
+  priceUnit?: 'day' | 'hour' | 'night';
+  /** Gym membership length unit. */
+  membershipUnit?: MembershipUnit;
+  /** Gym membership duration (days or months). */
+  membershipDuration?: number;
+  /** Barber/salon package: included items. */
+  includes?: string[];
 };
 
 export type DetailModel = {
@@ -80,6 +101,8 @@ export type DetailModel = {
   showFeatureChips: boolean;
   showSpaces: boolean;
   showAmenities: boolean;
+  /** Past works gallery for photographers. */
+  showPortfolio: boolean;
   showAddress: boolean;
   showRatingBanner: boolean;
   showDeposit: boolean;
@@ -92,6 +115,8 @@ export type DetailModel = {
   featureChips: FeatureChip[];
   spaces: IconRow[];
   amenities: IconRow[];
+  /** Cloudinary URLs of photographer past works. */
+  portfolio: string[];
   packages: PricePackage[];
   /** Max persons from chalet facility (shown on every package card). */
   maxGuestsLabel?: string;
@@ -131,6 +156,24 @@ function strList(attrs: Record<string, unknown>, key: string): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 }
 
+function imageUrls(attrs: Record<string, unknown>, key: string): string[] {
+  return strList(attrs, key).filter((u) => /^https?:\/\//i.test(u));
+}
+
+function spaceImageMap(attrs: Record<string, unknown>): Record<string, string[]> {
+  const v = attrs.spaceImages;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  const out: Record<string, string[]> = {};
+  for (const [label, urls] of Object.entries(v as Record<string, unknown>)) {
+    if (!label.trim() || !Array.isArray(urls)) continue;
+    const cleaned = urls.filter(
+      (u): u is string => typeof u === 'string' && /^https?:\/\//i.test(u),
+    );
+    if (cleaned.length) out[label.trim()] = cleaned;
+  }
+  return out;
+}
+
 function isHotel(cat: string): boolean {
   return isHotelCategory(cat);
 }
@@ -160,11 +203,26 @@ function isSport(cat: string): boolean {
 function isPool(cat: string): boolean {
   return isPoolCategory(cat);
 }
+
+function isGym(cat: string): boolean {
+  return isGymCategory(cat);
+}
+
+function readMembershipUnit(raw: unknown): MembershipUnit | undefined {
+  if (raw === 'DAYS' || raw === 'MONTHS') return raw;
+  return undefined;
+}
 function isSalon(cat: string): boolean {
   return isSalonCategory(cat);
 }
 function isCar(cat: string): boolean {
   return isCarCategory(cat);
+}
+function isTransport(cat: string): boolean {
+  return isTransportCategory(cat);
+}
+function isApparel(cat: string): boolean {
+  return isApparelCategory(cat);
 }
 function isArtist(cat: string): boolean {
   return isArtistCategory(cat);
@@ -197,7 +255,11 @@ function iconForAmenityLabel(label: string): keyof typeof Ionicons.glyphMap {
   return 'checkmark-circle-outline';
 }
 
-export function buildDetailModel(provider: Provider, service?: ServiceItem | null): DetailModel {
+export function buildDetailModel(
+  provider: Provider,
+  service?: ServiceItem | null,
+  categoryHints: Array<string | null | undefined> = [],
+): DetailModel {
   const cat = provider.categoryName ?? provider.category?.name ?? 'خدمة';
   const facilityAttrs = (provider.attributes ?? {}) as Record<string, unknown>;
   const serviceAttrs = (service?.attributes ?? {}) as Record<string, unknown>;
@@ -210,20 +272,37 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
       : 30;
   const depositAmount = price ? Math.round((price * depositPct) / 100) : undefined;
 
-  const hotel = isHotel(cat);
-  const hall = isHall(cat);
-  const chalet = isChalet(cat);
-  const stay = isStay(cat);
-  const health = isHealth(cat);
-  const sport = isSport(cat);
-  const pool = isPool(cat);
-  const salon = isSalon(cat);
-  const car = isCar(cat);
-  const artist = isArtist(cat);
-  const photo = isPhoto(cat);
-  const supply = isEventSupply(cat);
+  const kind = resolveFacilityKind(
+    cat,
+    provider.category?.name,
+    ...categoryHints,
+  );
+  const hotel = kind === 'hotel' || isHotel(cat);
+  const hall = kind === 'hall' || isHall(cat);
+  const chalet =
+    kind === 'chalet' || kind === 'tairaman' || isChalet(cat);
+  const stay = isStay(cat) || hotel || hall || chalet;
+  const health = kind === 'health' || isHealth(cat);
+  const sport = kind === 'sport' || isSport(cat);
+  const pool = kind === 'pool' || isPool(cat);
+  const gym = kind === 'gym' || isGym(cat);
+  const salon = kind === 'salon' || isSalon(cat);
+  const car = kind === 'car' || isCar(cat);
+  const transport = kind === 'transport' || isTransport(cat);
+  const apparel = kind === 'apparel' || isApparel(cat);
+  const catalogRental = car || transport || apparel;
+  const artist = kind === 'artist' || isArtist(cat);
+  const photo = kind === 'photo' || isPhoto(cat);
+  const supply = kind === 'supply' || isEventSupply(cat);
   const serviceFacility =
-    health || salon || pool || car || artist || photo || supply;
+    health ||
+    salon ||
+    pool ||
+    gym ||
+    catalogRental ||
+    artist ||
+    photo ||
+    supply;
 
   const bathrooms =
     num(serviceAttrs, 'bathrooms') ??
@@ -274,6 +353,11 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
   const slotMinutes =
     num(serviceAttrs, 'slotMinutes') ?? num(serviceAttrs, 'durationMinutes');
 
+  const bathroomImages = imageUrls(facilityAttrs, 'bathroomImages');
+  const bedroomImages = imageUrls(facilityAttrs, 'bedroomImages');
+  const majlisImages = imageUrls(facilityAttrs, 'majlisImages');
+  const spaceImagesByLabel = spaceImageMap(facilityAttrs);
+
   const featureChips: FeatureChip[] = [];
   // طيرمانات: capacity is per package, not on the facility header chips.
   if (chalet && !isTairaman(cat) && maxGuests != null) {
@@ -284,15 +368,30 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
     });
   }
   if (chalet && bathrooms != null) {
-    featureChips.push({ key: 'bath', icon: 'water-outline', label: `${bathrooms} حمامات` });
+    featureChips.push({
+      key: 'bath',
+      icon: 'water-outline',
+      label: `${bathrooms} حمامات`,
+      images: bathroomImages.length ? bathroomImages : undefined,
+    });
   }
   if (chalet && bedrooms != null) {
-    featureChips.push({ key: 'bed', icon: 'bed-outline', label: `${bedrooms} غرف نوم` });
+    featureChips.push({
+      key: 'bed',
+      icon: 'bed-outline',
+      label: `${bedrooms} غرف نوم`,
+      images: bedroomImages.length ? bedroomImages : undefined,
+    });
   }
   if (chalet && majlis != null) {
-    featureChips.push({ key: 'majlis', icon: 'home-outline', label: `${majlis} مجالس` });
+    featureChips.push({
+      key: 'majlis',
+      icon: 'home-outline',
+      label: `${majlis} مجالس`,
+      images: majlisImages.length ? majlisImages : undefined,
+    });
   }
-  if ((health || salon || photo) && slotMinutes != null) {
+  if (health && slotMinutes != null) {
     featureChips.push({ key: 'slot', icon: 'time-outline', label: `${slotMinutes} دقيقة` });
   }
   if (sport && maxPlayers != null) {
@@ -317,7 +416,7 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
       label: `${fieldLength} × ${fieldWidth} متر مربع`,
     });
   }
-  if (car) {
+  if (car || transport) {
     const seats = num(serviceAttrs, 'seats') ?? num(facilityAttrs, 'seats');
     const year = num(serviceAttrs, 'year') ?? num(facilityAttrs, 'year');
     const transmission =
@@ -329,7 +428,7 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
     if (seats != null) {
       featureChips.push({
         key: 'seats',
-        icon: 'car-outline',
+        icon: transport ? 'bus-outline' : 'car-outline',
         label: `${seats} مقاعد`,
       });
     }
@@ -348,6 +447,31 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
       });
     }
   }
+  if (apparel) {
+    const size =
+      typeof serviceAttrs.size === 'string' ? serviceAttrs.size.trim() : '';
+    const color =
+      typeof serviceAttrs.color === 'string' ? serviceAttrs.color.trim() : '';
+    if (size) {
+      featureChips.push({
+        key: 'size',
+        icon: 'resize-outline',
+        label: `مقاس ${size}`,
+      });
+    }
+    if (color) {
+      featureChips.push({
+        key: 'color',
+        icon: 'color-palette-outline',
+        label: color,
+      });
+    }
+    featureChips.push({
+      key: 'daily',
+      icon: 'calendar-outline',
+      label: 'تأجير يومي',
+    });
+  }
   if (supply) {
     featureChips.push({ key: 'qty', icon: 'cube-outline', label: 'حجز بالكمية' });
   }
@@ -361,30 +485,45 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
     featureChips.push({ key: 'photo', icon: 'camera-outline', label: 'جلسة تصوير' });
   }
 
-  const spacesFromAttr = strList(attrs, 'spaces');
-  const amenitiesFromAttr = strList(attrs, 'amenities');
+  const spacesFromAttr = catalogRental
+    ? []
+    : strList(attrs, 'spaces');
+  // Catalog products: amenities live on the selected product (service).
+  const amenitiesFromAttr = catalogRental
+    ? strList(serviceAttrs, 'amenities')
+    : strList(attrs, 'amenities');
   const includes = strList(attrs, 'includes');
   const customTerms = strList(attrs, 'terms');
   const customPolicy = strList(attrs, 'policyBullets');
   const customDepositNote =
     typeof attrs.depositNote === 'string' ? attrs.depositNote.trim() : '';
+  /** Portfolio is facility-level only (not merged from packages). */
+  const portfolio = strList(facilityAttrs, 'portfolio').filter((u) =>
+    /^https?:\/\//i.test(u),
+  );
 
   const serviceDefaults =
-    pool
-      ? SERVICE_FACILITY_DEFAULTS.pool
-      : health
-        ? SERVICE_FACILITY_DEFAULTS.health
-        : salon
-          ? SERVICE_FACILITY_DEFAULTS.salon
-          : car
-            ? SERVICE_FACILITY_DEFAULTS.car
-            : artist
-              ? SERVICE_FACILITY_DEFAULTS.artist
-              : photo
-                ? SERVICE_FACILITY_DEFAULTS.photo
-                : supply
-                  ? SERVICE_FACILITY_DEFAULTS.supply
-                  : null;
+    gym
+      ? SERVICE_FACILITY_DEFAULTS.gym
+      : pool
+        ? SERVICE_FACILITY_DEFAULTS.pool
+        : health
+          ? SERVICE_FACILITY_DEFAULTS.health
+          : salon
+            ? SERVICE_FACILITY_DEFAULTS.salon
+            : car
+              ? SERVICE_FACILITY_DEFAULTS.car
+              : transport
+                ? SERVICE_FACILITY_DEFAULTS.transport
+                : apparel
+                ? SERVICE_FACILITY_DEFAULTS.apparel
+                : artist
+                  ? SERVICE_FACILITY_DEFAULTS.artist
+                  : photo
+                    ? SERVICE_FACILITY_DEFAULTS.photo
+                    : supply
+                      ? SERVICE_FACILITY_DEFAULTS.supply
+                      : null;
 
   const defaultSpaces: IconRow[] = hotel
     ? [
@@ -456,8 +595,12 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
           key: `s${i}`,
           icon: iconForSpaceLabel(label),
           label,
+          images: spaceImagesByLabel[label],
         }))
-      : defaultSpaces;
+      : defaultSpaces.map((row) => ({
+          ...row,
+          images: spaceImagesByLabel[row.label],
+        }));
 
   const amenities: IconRow[] =
     amenitiesFromAttr.length > 0
@@ -494,11 +637,21 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
       num(a, 'guests') ??
       maxGuests;
     const period = a.period;
+    const packagePeriods = parsePricePeriods(a.pricePeriods);
+    const isHourlyPackage =
+      a.pricingMode === 'HOURLY' ||
+      ((sport || pool || isTairaman(cat)) &&
+        packagePeriods.length > 0 &&
+        a.pricingMode !== 'FIXED');
     let timeLabel: string | undefined;
     const from =
-      typeof a.fromTime === 'string' ? String(a.fromTime).slice(0, 5) : undefined;
+      typeof a.fromTime === 'string'
+        ? String(a.fromTime).slice(0, 5)
+        : packagePeriods[0]?.fromTime;
     const to =
-      typeof a.toTime === 'string' ? String(a.toTime).slice(0, 5) : undefined;
+      typeof a.toTime === 'string'
+        ? String(a.toTime).slice(0, 5)
+        : packagePeriods[0]?.toTime;
     // Card title matches mock: period name for day packages
     const displayTitle =
       period === 'MORNING'
@@ -508,7 +661,12 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
           : period === 'PER_NIGHT'
             ? s.name?.trim() || 'حجز بالليلة'
             : s.name?.trim() || 'باقة';
-    if (period === 'PER_NIGHT') {
+    if (isHourlyPackage) {
+      timeLabel =
+        from && to
+          ? `بالساعة · متاح من ${formatArabicClock(from)} إلى ${formatArabicClock(to)}`
+          : 'حجز بالساعة — اختر وقت الدخول والمغادرة';
+    } else if (period === 'PER_NIGHT') {
       timeLabel =
         from && to
           ? `من ${formatArabicClock(from)} إلى ${formatArabicClock(to)}`
@@ -524,49 +682,119 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
       timeLabel = `من ${formatArabicClock(from)} إلى ${formatArabicClock(to)}`;
     } else if (num(a, 'hours') != null) {
       timeLabel = `مدة ${num(a, 'hours')} ساعات`;
-    } else if (num(a, 'slotMinutes') != null) {
+    } else if (!salon && num(a, 'slotMinutes') != null) {
       timeLabel = `${num(a, 'slotMinutes')} دقيقة`;
     }
 
     const seats = num(a, 'seats');
     const duration =
       num(a, 'slotMinutes') ?? num(a, 'durationMinutes');
-    const capacityLabel = car
-      ? seats != null
-        ? `${seats} مقاعد`
-        : undefined
-      : health || salon || photo
-        ? duration != null
-          ? `${duration} دقيقة`
-          : undefined
-        : artist
-          ? undefined
-          : guests != null
-            ? `${guests} أشخاص أو أقل`
-            : duration != null
+    const packageIncludes = strList(a, 'includes');
+    /** Package lists includes (barber/salon) — hide duration on the card. */
+    const hasPackageIncludes = packageIncludes.length > 0;
+    const hideDurationOnCard = salon || hasPackageIncludes;
+    /** Photographers: name + detail + price only — no duration/capacity on the card. */
+    const size =
+      typeof a.size === 'string' && a.size.trim() ? a.size.trim() : undefined;
+    const color =
+      typeof a.color === 'string' && a.color.trim() ? a.color.trim() : undefined;
+    const apparelLabel = [size ? `مقاس ${size}` : null, color]
+      .filter(Boolean)
+      .join(' · ');
+
+    const capacityLabel = photo || hideDurationOnCard
+      ? undefined
+      : apparel
+        ? apparelLabel || undefined
+        : car || transport
+          ? seats != null
+            ? `${seats} مقاعد`
+            : undefined
+          : health
+            ? duration != null
               ? `${duration} دقيقة`
-              : undefined;
+              : undefined
+            : artist
+              ? undefined
+              : guests != null
+                ? `${guests} أشخاص أو أقل`
+                : duration != null
+                  ? `${duration} دقيقة`
+                  : undefined;
+    const isPoolDayPackage =
+      pool && !isHourlyPackage && a.pricingMode === 'FIXED';
+    const membershipUnit = gym
+      ? readMembershipUnit(a.membershipUnit) ?? 'MONTHS'
+      : undefined;
+    const membershipDuration = gym
+      ? Math.max(1, Math.floor(num(a, 'membershipDuration') ?? 1))
+      : undefined;
+    const isGymMembership = gym && membershipUnit != null && membershipDuration != null;
+
+    const packageTimeLabel = photo || hideDurationOnCard
+      ? undefined
+      : isGymMembership
+        ? membershipLabel(membershipUnit, membershipDuration) ??
+          'اختر يوم بداية الاشتراك'
+        : isPoolDayPackage
+          ? 'يوم كامل — اختر يوماً من التقويم'
+          : catalogRental
+            ? 'السعر لليوم — حسب تاريخ الاستلام والإرجاع'
+            : timeLabel;
+
+    const detailText = (s.description ?? '').trim() || undefined;
+
+    const hourlyRate =
+      num(a, 'pricePerHour') ??
+      packagePeriods[0]?.pricePerHour ??
+      undefined;
 
     return {
       id: s.id,
       title: displayTitle,
-      price: s.priceFrom ?? s.basePrice ?? 0,
+      detail: detailText,
+      price: isHourlyPackage
+        ? hourlyRate ?? s.priceFrom ?? s.basePrice ?? 0
+        : s.priceFrom ?? s.basePrice ?? 0,
       capacityLabel,
-      timeLabel,
+      timeLabel: packageTimeLabel,
+      includes: hasPackageIncludes ? packageIncludes : undefined,
       period:
         period === 'MORNING' || period === 'EVENING' || period === 'PER_NIGHT'
           ? period
           : undefined,
-      fromTime: from,
-      toTime: to,
+      fromTime: photo || isPoolDayPackage || isGymMembership ? undefined : from,
+      toTime: photo || isPoolDayPackage || isGymMembership ? undefined : to,
+      pricingMode: isHourlyPackage
+        ? 'HOURLY'
+        : isPoolDayPackage || isGymMembership || catalogRental
+          ? isPoolDayPackage || isGymMembership
+            ? 'FIXED'
+            : 'DAILY'
+          : undefined,
+      priceUnit: isHourlyPackage
+        ? 'hour'
+        : isPoolDayPackage || catalogRental
+          ? 'day'
+          : undefined,
+      membershipUnit,
+      membershipDuration,
     };
   });
 
+  const hasPoolDayPackages = packages.some(
+    (p) => p.pricingMode === 'FIXED' || p.priceUnit === 'day',
+  );
+  const poolHourlyOnly =
+    pool && pricePeriods.length > 0 && !hasPoolDayPackages;
+
   let ctaLabel = 'استعراض الأيام المتفرغة';
   if (hotel) ctaLabel = 'استعراض الغرف';
-  else if (health || salon || photo) ctaLabel = 'اختيار الموعد';
+  else if (health || salon) ctaLabel = 'اختيار الموعد';
+  else if (gym) ctaLabel = 'اختيار الاشتراك';
+  else if (photo || (pool && hasPoolDayPackages)) ctaLabel = 'اختيار اليوم';
   else if (sport || pool) ctaLabel = 'اختيار الوقت والمدة';
-  else if (car) ctaLabel = 'اختيار أيام التأجير';
+  else if (catalogRental) ctaLabel = 'اختيار أيام التأجير';
   else if (artist) ctaLabel = 'استعراض الأيام المتفرغة';
   else if (supply) ctaLabel = 'تحديد الكمية';
 
@@ -576,10 +804,13 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
   else if (chalet) aboutTitle = 'عن الشاليهات';
   else if (hall) aboutTitle = 'عن القاعات';
   else if (sport) aboutTitle = 'عن الملعب';
+  else if (gym) aboutTitle = 'عن النادي';
   else if (pool) aboutTitle = 'عن المسبح';
   else if (health) aboutTitle = 'عن المنشأة الصحية';
   else if (salon) aboutTitle = 'عن الصالون';
   else if (car) aboutTitle = 'عن السيارات';
+  else if (transport) aboutTitle = 'عن النقليات';
+  else if (apparel) aboutTitle = 'عن الملبوسات';
   else if (artist) aboutTitle = 'عن الفنان';
   else if (photo) aboutTitle = 'عن جلسة التصوير';
 
@@ -652,33 +883,42 @@ export function buildDetailModel(provider: Provider, service?: ServiceItem | nul
     show360: chalet,
     tourUrl,
     showFeatureChips: featureChips.length > 0 && !hotel && !hall,
-    showSpaces: spaces.length > 0 && (stay || sport || serviceFacility),
+    showSpaces:
+      !catalogRental &&
+      spaces.length > 0 &&
+      (stay || sport || serviceFacility),
     showAmenities: amenities.length > 0,
+    showPortfolio: portfolio.length > 0,
     showAddress: true,
     showRatingBanner: true,
     showDeposit:
       stay ||
       supply ||
       artist ||
-      car ||
+      catalogRental ||
       Boolean(customDepositNote) ||
       Boolean(depositAmount),
-    showInsurance: (chalet || hall || car) && insuranceAmount != null,
+    showInsurance:
+      (chalet || hall || catalogRental) && insuranceAmount != null,
     showTerms:
       stay ||
       hall ||
       serviceFacility ||
       customTerms.length > 0,
-    // Sports/pools with period bands use the ticket UI instead of package cards.
+    // Sports (and hourly-only pools) use the period ticket; day packages use cards.
     showPackages:
       packages.length > 0 &&
       !hotel &&
-      !((sport || pool) && pricePeriods.length > 0),
-    showPricePeriods: (sport || pool) && pricePeriods.length > 0,
+      !(sport && pricePeriods.length > 0) &&
+      !poolHourlyOnly,
+    showPricePeriods:
+      (sport && pricePeriods.length > 0) ||
+      (pool && pricePeriods.length > 0),
     pricePeriods,
     featureChips,
     spaces,
     amenities,
+    portfolio,
     packages,
     maxGuestsLabel:
       maxGuests != null ? `${maxGuests} أشخاص أو أقل` : undefined,

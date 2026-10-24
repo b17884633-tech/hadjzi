@@ -16,6 +16,9 @@ type Props = {
   selectedId?: number | string | null;
   onClose: () => void;
   onSelect: (option: PickerOption) => void;
+  /** Optional footer action (e.g. add new item). */
+  actionLabel?: string;
+  onAction?: () => void;
 };
 
 export function OptionPickerSheet({
@@ -26,6 +29,8 @@ export function OptionPickerSheet({
   selectedId,
   onClose,
   onSelect,
+  actionLabel,
+  onAction,
 }: Props) {
   return (
     <SmoothBottomSheet visible={visible} onClose={onClose} sheetStyle={styles.sheet}>
@@ -56,6 +61,18 @@ export function OptionPickerSheet({
           );
         })}
       </ScrollView>
+
+      {actionLabel && onAction ? (
+        <Pressable
+          style={({ pressed }) => [styles.actionBtn, pressed && styles.rowPressed]}
+          onPress={() => {
+            onClose();
+            onAction();
+          }}
+        >
+          <Text style={styles.actionText}>{actionLabel}</Text>
+        </Pressable>
+      ) : null}
     </SmoothBottomSheet>
   );
 }
@@ -119,6 +136,20 @@ const styles = StyleSheet.create({
   },
   nameSelected: {
     fontWeight: '700',
+    color: theme.colors.primary,
+  },
+  actionBtn: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: 14,
+    borderStyle: 'dashed',
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  actionText: {
+    fontSize: 14,
+    fontWeight: '800',
     color: theme.colors.primary,
   },
 });

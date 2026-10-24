@@ -3,6 +3,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  MaxLength,
   MinLength,
 } from 'class-validator';
 import { DisputeStatus } from '../../../common/enums';
@@ -15,6 +16,7 @@ export class CreateDisputeDto {
 
   @IsString()
   @MinLength(3)
+  @MaxLength(4000)
   reason: string;
 }
 
@@ -24,5 +26,6 @@ export class ResolveDisputeDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(4000)
   resolution?: string;
 }

@@ -31,6 +31,7 @@ import { JobsModule } from './jobs/jobs.module';
 import { HealthModule } from './modules/health/health.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { AdminModule } from './modules/admin/admin.module';
+import { PushModule } from './modules/push/push.module';
 
 @Module({
   imports: [
@@ -69,6 +70,7 @@ import { AdminModule } from './modules/admin/admin.module';
     HealthModule,
     UploadsModule,
     AdminModule,
+    PushModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

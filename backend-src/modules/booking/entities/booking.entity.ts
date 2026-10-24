@@ -64,6 +64,28 @@ export class Booking {
   })
   totalAmount: number;
 
+  /** Snapshot of applied provider offer % (null = no discount). */
+  @Column({
+    name: 'discount_percent',
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+    nullable: true,
+    transformer: decimalTransformer,
+  })
+  discountPercent: number | null;
+
+  /** Pre-discount total when an offer was applied. */
+  @Column({
+    name: 'original_total_amount',
+    type: 'decimal',
+    precision: 12,
+    scale: 2,
+    nullable: true,
+    transformer: decimalTransformer,
+  })
+  originalTotalAmount: number | null;
+
   @Column({
     name: 'deposit_percentage',
     type: 'decimal',

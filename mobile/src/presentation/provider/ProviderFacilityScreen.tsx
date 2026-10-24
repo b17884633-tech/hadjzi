@@ -17,6 +17,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { theme } from '../../core/ui/theme';
 import { formatServicePrice } from '../../core/common/currency';
+import { categoryAncestorNames } from '../../data/mappers/homeMappers';
 import { useApp } from '../../di/AppProvider';
 import { ProviderProfile } from '../../data/remote/providerApi';
 import type { FacilityReview } from '../../data/remote/reviewApi';
@@ -34,15 +35,14 @@ import {
   StarsRow,
 } from './detail/RatingsSection';
 import {
-  isArtistCategory,
-  isHallCategory,
-  isHotelCategory,
-  isChaletCategory,
-  isCarCategory,
+  resolveFacilityKind,
+  type FacilityKind,
 } from './categoryKinds';
+import { ProviderOffersPanel } from './ProviderOffersPanel';
+import type { ProviderOffer } from '../../domain/model/ProviderOffer';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ProviderFacility'>;
-type Tab = 'services' | 'bookings' | 'reviews';
+type Tab = 'services' | 'bookings' | 'reviews' | 'offers';
 
 function providerStatusLabel(status?: string) {
   switch (status) {
@@ -66,17 +66,43 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
   const [bootLoading, setBootLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [provider, setProvider] = useState<ProviderProfile | null>(null);
+  const [facilityKind, setFacilityKind] = useState<FacilityKind>('other');
   const [tab, setTab] = useState<Tab>('services');
   const [services, setServices] = useState<OwnedService[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [reviews, setReviews] = useState<FacilityReview[]>([]);
   const [reviewAverage, setReviewAverage] = useState(0);
   const [reviewCount, setReviewCount] = useState(0);
+  const [offers, setOffers] = useState<ProviderOffer[]>([]);
   const [bookingQuery, setBookingQuery] = useState('');
   const [actionId, setActionId] = useState<string | null>(null);
 
+  const isHotel = facilityKind === 'hotel';
+  const isChalet = facilityKind === 'chalet' || facilityKind === 'tairaman';
+  const isHall = facilityKind === 'hall';
+  const isArtist = facilityKind === 'artist';
+  const isPhoto = facilityKind === 'photo';
+  const isPool = facilityKind === 'pool';
+  const isGym = facilityKind === 'gym';
+  const isCar = facilityKind === 'car';
+  const isTransport = facilityKind === 'transport';
+  const isApparel = facilityKind === 'apparel';
+  const isCatalog = isCar || isTransport || isApparel;
+  const catalogTabLabel = isApparel
+    ? 'المنتجات'
+    : isTransport
+      ? 'المركبات'
+      : 'السيارات';
+  const catalogAddLabel = isApparel
+    ? 'إضافة منتج'
+    : isTransport
+      ? 'إضافة مركبة'
+      : 'إضافة سيارة';
+  const isPackageFacility =
+    isChalet || isHall || isArtist || isPhoto || isPool || isGym;
+
   const load = useCallback(async () => {
-    const [me, svc, bks, reviewSummary] = await Promise.all([
+    const [me, svc, bks, reviewSummary, treeRes, offerList] = await Promise.all([
       container.providerApi.getMineById(providerId),
       container.serviceApi.listMine(providerId),
       container.bookingRepository.listMine(),
@@ -86,19 +112,42 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
         average: 0,
         reviews: [] as FacilityReview[],
       })),
+      container.categoryApi.tree().catch(() => ({ data: { data: [] as never[] } })),
+      container.providerApi.listOffers(providerId).catch(() => [] as ProviderOffer[]),
     ]);
+    setOffers(offerList);
+
+    const treeData = treeRes.data.data ?? [];
+    const categoryId = me.categoryId ?? me.category?.id ?? null;
+    const kind = resolveFacilityKind(
+      me.category?.name,
+      ...categoryAncestorNames(treeData, categoryId),
+    );
+    setFacilityKind(kind);
+    const photoFacility = kind === 'photo';
+    const gymFacility = kind === 'gym';
 
     // Keep calendars bookable: hourly for sports/pools/appointments, all-day otherwise.
+    // Photographers / pool day packages / gym memberships — never heal as timed slots.
     const today = new Date().toISOString().slice(0, 10);
     let healed = false;
     for (const s of svc) {
       const attrs = (s.attributes ?? {}) as Record<string, unknown>;
+      const isPoolDayPackage =
+        kind === 'pool' &&
+        attrs.pricingMode === 'FIXED' &&
+        !(Array.isArray(attrs.pricePeriods) && attrs.pricePeriods.length > 0);
+      const dayExclusivePackage =
+        photoFacility || isPoolDayPackage || gymFacility;
       const hasPricePeriods =
-        Array.isArray(attrs.pricePeriods) && attrs.pricePeriods.length > 0;
+        !dayExclusivePackage &&
+        Array.isArray(attrs.pricePeriods) &&
+        attrs.pricePeriods.length > 0;
       const isAppointmentSlot =
-        typeof attrs.slotMinutes === 'number' ||
-        typeof attrs.durationMinutes === 'number' ||
-        (typeof s.durationMinutes === 'number' && s.durationMinutes > 0);
+        !dayExclusivePackage &&
+        (typeof attrs.slotMinutes === 'number' ||
+          typeof attrs.durationMinutes === 'number' ||
+          (typeof s.durationMinutes === 'number' && s.durationMinutes > 0));
       const futureTimed = (s.availabilities ?? []).filter(
         (a) =>
           a.date >= today &&
@@ -114,11 +163,17 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
 
       if (hasPricePeriods || isAppointmentSlot) {
         if (futureTimed < 20) {
+          const hourlyCap =
+            typeof attrs.inventory === 'number'
+              ? attrs.inventory
+              : typeof attrs.units === 'number'
+                ? attrs.units
+                : 1;
           await container.serviceApi.seedHourlyAvailabilities(s.id, {
             days: 14,
             startHour: isAppointmentSlot && !hasPricePeriods ? 9 : undefined,
             endHour: isAppointmentSlot && !hasPricePeriods ? 21 : undefined,
-            totalCapacity: 1,
+            totalCapacity: Math.max(1, Number(hourlyCap) || 1),
           });
           healed = true;
         }
@@ -366,14 +421,12 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
             onPress={() => setTab('services')}
           >
             <Text style={[styles.tabText, tab === 'services' && styles.tabTextOn]}>
-              {isHotelCategory(provider.category?.name)
+              {isHotel
                 ? 'الغرف'
-                : isChaletCategory(provider.category?.name) ||
-                    isHallCategory(provider.category?.name) ||
-                    isArtistCategory(provider.category?.name)
+                : isPackageFacility
                   ? 'الباقات'
-                  : isCarCategory(provider.category?.name)
-                    ? 'السيارات'
+                  : isCatalog
+                    ? catalogTabLabel
                     : 'الخدمات'}
               </Text>
             </Pressable>
@@ -394,6 +447,15 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
               {reviewCount > 0 ? ` (${reviewCount})` : ''}
             </Text>
           </Pressable>
+          <Pressable
+            style={[styles.tab, tab === 'offers' && styles.tabOn]}
+            onPress={() => setTab('offers')}
+          >
+            <Text style={[styles.tabText, tab === 'offers' && styles.tabTextOn]}>
+              العروض
+              {offers.length > 0 ? ` (${offers.length})` : ''}
+            </Text>
+          </Pressable>
         </View>
 
         {tab === 'services' ? (
@@ -406,28 +468,24 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
             >
               <Ionicons name="add-circle" size={22} color={theme.colors.accentDark} />
               <Text style={styles.addRowText}>
-                {isHotelCategory(provider.category?.name)
+                {isHotel
                   ? 'إضافة غرفة'
-                  : isChaletCategory(provider.category?.name) ||
-                      isHallCategory(provider.category?.name) ||
-                      isArtistCategory(provider.category?.name)
+                  : isPackageFacility
                     ? 'إضافة باقة'
-                    : isCarCategory(provider.category?.name)
-                      ? 'إضافة سيارة'
+                    : isCatalog
+                      ? catalogAddLabel
                       : 'إضافة خدمة'}
               </Text>
             </Pressable>
 
             {services.length === 0 ? (
               <Text style={styles.empty}>
-                {isHotelCategory(provider.category?.name)
+                {isHotel
                   ? 'لا توجد غرف — أضف غرفاً تظهر في صفحة التفاصيل.'
-                  : isChaletCategory(provider.category?.name) ||
-                      isHallCategory(provider.category?.name) ||
-                      isArtistCategory(provider.category?.name)
+                  : isPackageFacility
                     ? 'لا توجد باقات — أضف باقات تظهر في صفحة التفاصيل.'
-                    : isCarCategory(provider.category?.name)
-                      ? 'لا توجد سيارات — أضف سيارات تظهر في صفحة التفاصيل.'
+                    : isCatalog
+                      ? `لا توجد ${catalogTabLabel} — أضف عناصر تظهر للعميل مباشرة في التصنيف.`
                       : 'لا توجد خدمات — أضف خدمات تظهر في صفحة التفاصيل.'}
               </Text>
             ) : (
@@ -598,6 +656,14 @@ export function ProviderFacilityScreen({ route, navigation }: Props) {
               })
             )}
           </View>
+        ) : tab === 'offers' ? (
+          <ProviderOffersPanel
+            providerId={providerId}
+            offers={offers}
+            onChanged={() => {
+              void load();
+            }}
+          />
         ) : (
           <View style={styles.section}>
             <View style={styles.reviewsSummary}>
@@ -700,19 +766,24 @@ const styles = StyleSheet.create({
   statLabel: { fontSize: 12, color: theme.colors.textSecondary, marginTop: 2 },
   tabs: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     backgroundColor: '#E8EDF5',
     borderRadius: 14,
     padding: 4,
+    gap: 2,
   },
   tab: {
-    flex: 1,
+    flexGrow: 1,
+    flexBasis: '22%',
+    minWidth: 72,
     paddingVertical: 10,
+    paddingHorizontal: 4,
     borderRadius: 12,
     alignItems: 'center',
   },
   tabOn: { backgroundColor: theme.colors.surface },
   tabText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     color: theme.colors.textSecondary,
   },

@@ -116,8 +116,53 @@ function mapOwned(raw: ApiServiceDetail): OwnedService {
   };
 }
 
+export type CarBrand = {
+  id: number;
+  name: string;
+};
+
 export class ServiceApi {
   constructor(private readonly client: AxiosInstance) {}
+
+  async listCarBrands(): Promise<CarBrand[]> {
+    const response = await this.client.get<ApiSuccessResponse<CarBrand[]>>(
+      '/services/car-brands',
+    );
+    const envelope = response.data as
+      | ApiSuccessResponse<CarBrand[]>
+      | CarBrand[]
+      | null
+      | undefined;
+    const list = Array.isArray(envelope)
+      ? envelope
+      : Array.isArray(envelope?.data)
+        ? envelope.data
+        : [];
+    const seen = new Set<string>();
+    const out: CarBrand[] = [];
+    for (const b of list) {
+      if (!b || typeof b.name !== 'string') continue;
+      const name = b.name.trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ id: Number(b.id) || out.length + 1, name });
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+  }
+
+  async ensureCarBrand(name: string): Promise<CarBrand | null> {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    const response = await this.client.post<ApiSuccessResponse<CarBrand>>(
+      '/services/car-brands',
+      { name: trimmed },
+    );
+    const raw = response.data?.data;
+    if (!raw?.name) return { id: 0, name: trimmed };
+    return { id: Number(raw.id) || 0, name: String(raw.name).trim() };
+  }
 
   async getService(id: string) {
     const response = await this.client.get<ApiSuccessResponse<ApiServiceDetail>>(

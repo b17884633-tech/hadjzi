@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { AppText as Text } from '@/core/ui/components/AppText';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,6 +11,8 @@ type Props = {
   onChange: (items: string[]) => void;
   placeholder?: string;
   addLabel?: string;
+  /** Optional control on the same row as the space name (e.g. compact photo upload). */
+  renderAccessory?: (item: string, index: number) => ReactNode;
 };
 
 /** Editable list of lines with a + button to append a new input row. */
@@ -20,6 +23,7 @@ export function DynamicLineList({
   onChange,
   placeholder = 'أضف عنصراً…',
   addLabel = 'إضافة',
+  renderAccessory,
 }: Props) {
   const updateAt = (index: number, value: string) => {
     const next = [...items];
@@ -56,7 +60,13 @@ export function DynamicLineList({
       ) : (
         <View style={styles.list}>
           {items.map((item, index) => (
-            <View key={`line-${index}`} style={styles.row}>
+            <View
+              key={`line-${index}`}
+              style={[styles.row, renderAccessory ? styles.rowWithAccessory : null]}
+            >
+              {renderAccessory ? (
+                <View style={styles.accessory}>{renderAccessory(item, index)}</View>
+              ) : null}
               <Pressable
                 style={styles.removeBtn}
                 onPress={() => removeAt(index)}
@@ -120,6 +130,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  rowWithAccessory: {
+    alignItems: 'flex-start',
+  },
+  accessory: {
+    flexShrink: 0,
+    paddingTop: 2,
   },
   input: {
     flex: 1,

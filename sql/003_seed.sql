@@ -44,7 +44,7 @@ FROM (
         ('كوافير', '/icons/salon.png', 'SLOT', 7),
         ('المسابح والنوادي', '/icons/pools.png', 'SLOT', 8),
         ('الملاعب', '/icons/fields.png', 'SLOT', 9),
-        ('النقليات', '/icons/transport.png', 'SLOT', 10),
+        ('النقليات', '/icons/transport.png', 'UNIT_DAY', 10),
         ('السيارات', '/icons/cars.png', 'UNIT_DAY', 11),
         ('الزفافين والفنانين', '/icons/artists.png', 'EVENT_DAY', 12),
         ('جلسات التصوير', '/icons/photo.png', 'SLOT', 13)

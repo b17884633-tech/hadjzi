@@ -189,6 +189,10 @@ export function AccountScreen() {
           <Pressable
             style={styles.logoutBtn}
             onPress={async () => {
+              const { unregisterPushToken } = await import(
+                '../../core/notifications/pushNotifications'
+              );
+              await unregisterPushToken(container.apiClient);
               await container.authRepository.logout();
               setUser(null);
             }}

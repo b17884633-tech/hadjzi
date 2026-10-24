@@ -8,9 +8,19 @@ import { Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { User } from './entities/user.entity';
 import { AccountStatus, UserRole } from '../../common/enums';
+import { KeyedTtlCache } from '../../common/utils/keyed-ttl-cache';
+
+/**
+ * Every authenticated request resolves the JWT subject to a User row. A short
+ * cache keeps that off the database under load; status/role changes made via
+ * this service invalidate immediately, others converge within the TTL.
+ */
+const AUTH_USER_CACHE_TTL_MS = 30_000;
 
 @Injectable()
 export class UsersService {
+  private readonly authCache = new KeyedTtlCache<User>(AUTH_USER_CACHE_TTL_MS);
+
   constructor(
     @InjectRepository(User)
     private readonly users: Repository<User>,
@@ -26,6 +36,20 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
     return user;
+  }
+
+  /** Cached variant for the auth guard — see AUTH_USER_CACHE_TTL_MS. */
+  async findByIdForAuth(id: string): Promise<User | null> {
+    const cached = this.authCache.get(id);
+    if (cached) return cached;
+    const user = await this.findById(id);
+    if (user) this.authCache.set(id, user);
+    return user;
+  }
+
+  /** Drop a cached auth user (call after any role/status/profile change). */
+  invalidateAuthCache(userId: string) {
+    this.authCache.delete(userId);
   }
 
   findByPhone(phone: string) {
@@ -72,6 +96,7 @@ export class UsersService {
       phoneVerified: true,
       status: AccountStatus.ACTIVE,
     });
+    this.invalidateAuthCache(userId);
     return this.findByIdOrFail(userId);
   }
 
@@ -86,11 +111,13 @@ export class UsersService {
       }
     }
     await this.users.update(userId, patch);
+    this.invalidateAuthCache(userId);
     return this.findByIdOrFail(userId);
   }
 
   async setRole(userId: string, role: UserRole) {
     await this.users.update(userId, { role });
+    this.invalidateAuthCache(userId);
     return this.findByIdOrFail(userId);
   }
 }

@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 import { ProviderStatus } from '../../../common/enums';
 
@@ -21,6 +22,7 @@ export class CreateProviderDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(5000)
   description?: string;
 
   @IsOptional()
@@ -36,21 +38,25 @@ export class CreateProviderDto {
   addressDetails?: string;
 
   @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
   @IsNumber()
-  latitude?: number;
+  latitude?: number | null;
 
   @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
   @IsNumber()
-  longitude?: number;
+  longitude?: number | null;
 
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
+  @MaxLength(2048, { each: true })
   @ArrayMaxSize(12)
   images?: string[];
 
   @IsOptional()
   @IsString()
+  @MaxLength(5000)
   cancellationPolicy?: string;
 
   /** Facility details shown on the public page (spaces, amenities, terms, …). */
@@ -62,6 +68,7 @@ export class CreateProviderDto {
 export class UpdateProviderDto {
   @IsOptional()
   @IsString()
+  @MaxLength(150)
   businessName?: string;
 
   @IsOptional()
@@ -70,6 +77,7 @@ export class UpdateProviderDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(5000)
   description?: string;
 
   @IsOptional()
@@ -85,20 +93,25 @@ export class UpdateProviderDto {
   addressDetails?: string;
 
   @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
   @IsNumber()
-  latitude?: number;
+  latitude?: number | null;
 
   @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
   @IsNumber()
-  longitude?: number;
+  longitude?: number | null;
 
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
+  @MaxLength(2048, { each: true })
+  @ArrayMaxSize(12)
   images?: string[];
 
   @IsOptional()
   @IsString()
+  @MaxLength(5000)
   cancellationPolicy?: string;
 
   @IsOptional()
