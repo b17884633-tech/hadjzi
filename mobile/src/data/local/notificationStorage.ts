@@ -273,7 +273,12 @@ export async function syncRemoteNotifications(
 
       await saveAll(merged);
       emitNotificationsChanged();
+      // Only mirror very fresh items to the tray (app was open). Older ones
+      // should arrive via Expo/FCM while the app was closed — avoid double-firing on open.
+      const now = Date.now();
       for (const n of newlyArrived) {
+        const ageMs = now - new Date(n.createdAt).getTime();
+        if (ageMs > 90_000) continue;
         void presentOsNotification({
           id: n.id,
           title: n.title,

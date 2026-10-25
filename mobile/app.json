@@ -23,13 +23,21 @@
     },
     "android": {
       "package": "com.platform.booking",
+      "googleServicesFile": "./google-services.json",
       "supportsRTL": true,
       "usesCleartextTraffic": true,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FFFFFF"
-      }
+      },
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "WAKE_LOCK",
+        "POST_NOTIFICATIONS",
+        "com.google.android.c2dm.permission.RECEIVE"
+      ]
     },
     "androidNavigationBar": {
       "backgroundColor": "#FFFFFF",

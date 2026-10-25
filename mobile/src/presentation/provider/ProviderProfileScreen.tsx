@@ -1332,7 +1332,7 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: DETAIL.border,
   },
-  map: { ...StyleSheet.absoluteFillObject },
+  map: { ...StyleSheet.absoluteFill },
   ratingBanner: {
     borderRadius: 16,
     paddingVertical: 18,

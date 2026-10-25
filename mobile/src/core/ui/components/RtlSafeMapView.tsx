@@ -73,6 +73,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   map: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
 });

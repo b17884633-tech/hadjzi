@@ -123,7 +123,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
   },
   pinCenter: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
     // Nudge up so the pin tip sits on the center point

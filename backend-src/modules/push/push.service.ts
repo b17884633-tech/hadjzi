@@ -186,6 +186,10 @@ export class PushService {
               await this.tokens.delete({ token: bad });
               this.logger.warn(`Removed invalid push token (${err})`);
             }
+          } else if (err === 'InvalidCredentials' || err === 'MismatchSenderId') {
+            this.logger.error(
+              `Expo push ${err}: upload FCM V1 service account on EAS (eas credentials) and rebuild with google-services.json`,
+            );
           } else if (err) {
             this.logger.warn(`Push failed: ${err}`);
           }

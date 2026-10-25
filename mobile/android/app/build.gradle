@@ -180,3 +180,6 @@ dependencies {
         implementation jscFlavor
     }
 }
+
+// Enables FCM so Expo can deliver pushes while the app is closed (not Firebase Auth)
+apply plugin: 'com.google.gms.google-services'

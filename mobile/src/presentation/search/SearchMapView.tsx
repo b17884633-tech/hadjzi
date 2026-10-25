@@ -1,13 +1,15 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useRef, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   StyleSheet,
   View,
 } from 'react-native';
 import { AppText as Text } from '@/core/ui/components/AppText';
-import { WebView } from 'react-native-webview';
+import MapView, { Marker, type Region } from 'react-native-maps';
+import { RtlSafeMapView } from '../../core/ui/components/RtlSafeMapView';
 import { theme } from '../../core/ui/theme';
 import { Provider } from '../../domain/model/Provider';
+import { MapProviderMarker } from './MapProviderMarker';
 import { centerForCityName, coordsForProvider } from './mapGeo';
 
 type Props = {
@@ -21,13 +23,15 @@ type Props = {
 type PinPayload = {
   id: string;
   name: string;
-  lat: number;
-  lng: number;
+  latitude: number;
+  longitude: number;
 };
 
+const DEFAULT_DELTA = 0.08;
+
 /**
- * Search map — Leaflet in a WebView (reliable tiles) with teal pins.
- * Tapping a pin opens the facility detail page.
+ * Search map — same react-native-maps + street tiles stack as facility details
+ * (WebView/Leaflet left a blank surface when layout fill styles broke).
  */
 export function SearchMapView({
   cityName,
@@ -36,6 +40,7 @@ export function SearchMapView({
   onOpenProvider,
   header,
 }: Props) {
+  const mapRef = useRef<MapView>(null);
   const cityCenter = useMemo(() => centerForCityName(cityName), [cityName]);
 
   const pins: PinPayload[] = useMemo(
@@ -45,44 +50,77 @@ export function SearchMapView({
         return {
           id: p.id,
           name: p.businessName,
-          lat: c.latitude,
-          lng: c.longitude,
+          latitude: c.latitude,
+          longitude: c.longitude,
         };
       }),
     [providers, cityCenter],
   );
 
-  const html = useMemo(
-    () => buildMapHtml(cityCenter.latitude, cityCenter.longitude, pins),
-    [cityCenter.latitude, cityCenter.longitude, pins],
-  );
+  const initialRegion: Region = useMemo(() => {
+    if (pins.length === 0) {
+      return {
+        latitude: cityCenter.latitude,
+        longitude: cityCenter.longitude,
+        latitudeDelta: DEFAULT_DELTA,
+        longitudeDelta: DEFAULT_DELTA,
+      };
+    }
+    if (pins.length === 1) {
+      return {
+        latitude: pins[0].latitude,
+        longitude: pins[0].longitude,
+        latitudeDelta: 0.04,
+        longitudeDelta: 0.04,
+      };
+    }
+    let minLat = pins[0].latitude;
+    let maxLat = pins[0].latitude;
+    let minLng = pins[0].longitude;
+    let maxLng = pins[0].longitude;
+    for (const p of pins) {
+      minLat = Math.min(minLat, p.latitude);
+      maxLat = Math.max(maxLat, p.latitude);
+      minLng = Math.min(minLng, p.longitude);
+      maxLng = Math.max(maxLng, p.longitude);
+    }
+    const latPad = Math.max((maxLat - minLat) * 0.35, 0.02);
+    const lngPad = Math.max((maxLng - minLng) * 0.35, 0.02);
+    return {
+      latitude: (minLat + maxLat) / 2,
+      longitude: (minLng + maxLng) / 2,
+      latitudeDelta: Math.min(0.35, maxLat - minLat + latPad * 2),
+      longitudeDelta: Math.min(0.35, maxLng - minLng + lngPad * 2),
+    };
+  }, [pins, cityCenter]);
 
   return (
     <View style={styles.root}>
-      <View style={styles.mapHost}>
-        <WebView
+      <View style={styles.mapHost} collapsable={false}>
+        <RtlSafeMapView
           key={`${cityName}-${pins.length}`}
-          originWhitelist={['*']}
-          source={{ html }}
-          style={styles.webview}
-          javaScriptEnabled
-          domStorageEnabled
-          mixedContentMode="always"
-          setSupportMultipleWindows={false}
-          onMessage={(e) => {
-            try {
-              const data = JSON.parse(e.nativeEvent.data) as {
-                type?: string;
-                id?: string;
-              };
-              if (data.type === 'open' && data.id) {
-                onOpenProvider(data.id);
-              }
-            } catch {
-              /* ignore */
-            }
-          }}
-        />
+          ref={mapRef}
+          streetTiles
+          style={StyleSheet.absoluteFill}
+          initialRegion={initialRegion}
+          showsCompass={false}
+          showsUserLocation={false}
+          rotateEnabled={false}
+          pitchEnabled={false}
+          toolbarEnabled={false}
+        >
+          {pins.map((p) => (
+            <Marker
+              key={p.id}
+              coordinate={{ latitude: p.latitude, longitude: p.longitude }}
+              title={p.name}
+              onPress={() => onOpenProvider(p.id)}
+              tracksViewChanges={false}
+            >
+              <MapProviderMarker />
+            </Marker>
+          ))}
+        </RtlSafeMapView>
       </View>
 
       <View style={styles.overlay} pointerEvents="box-none">
@@ -102,90 +140,14 @@ export function SearchMapView({
   );
 }
 
-function buildMapHtml(lat: number, lng: number, pins: PinPayload[]): string {
-  const pinsJson = JSON.stringify(pins).replace(/</g, '\\u003c');
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <style>
-    html, body, #map { margin: 0; padding: 0; height: 100%; width: 100%; background: #EEF2F6; }
-    .leaflet-control-attribution { font-size: 9px !important; }
-    .hz-pin {
-      width: 36px; height: 36px; margin-left: -18px; margin-top: -36px;
-      background: #26C6DA; border: 2.5px solid #fff; border-radius: 18px 18px 18px 4px;
-      transform: rotate(-45deg);
-      box-shadow: 0 2px 6px rgba(13,27,62,0.28);
-      display: flex; align-items: center; justify-content: center;
-    }
-    .hz-pin-inner {
-      transform: rotate(45deg);
-      color: #fff; font-size: 14px; line-height: 1;
-    }
-  </style>
-</head>
-<body>
-  <div id="map"></div>
-  <script>
-    (function () {
-      var center = [${lat}, ${lng}];
-      var pins = ${pinsJson};
-      var map = L.map('map', {
-        zoomControl: true,
-        attributionControl: true
-      }).setView(center, 13);
-
-      L.tileLayer('https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        subdomains: ['a', 'b', 'c'],
-        attribution: '&copy; OpenStreetMap'
-      }).addTo(map);
-
-      var icon = L.divIcon({
-        className: '',
-        html: '<div class="hz-pin"><span class="hz-pin-inner">⌂</span></div>',
-        iconSize: [36, 36],
-        iconAnchor: [18, 36]
-      });
-
-      var bounds = [];
-      pins.forEach(function (p) {
-        var m = L.marker([p.lat, p.lng], { icon: icon, title: p.name });
-        m.on('click', function () {
-          if (window.ReactNativeWebView) {
-            window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'open', id: p.id }));
-          }
-        });
-        m.addTo(map);
-        bounds.push([p.lat, p.lng]);
-      });
-
-      if (bounds.length > 1) {
-        map.fitBounds(bounds, { padding: [48, 48], maxZoom: 15 });
-      } else if (bounds.length === 1) {
-        map.setView(bounds[0], 14);
-      }
-    })();
-  </script>
-</body>
-</html>`;
-}
-
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#EEF2F6' },
   mapHost: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: '#EEF2F6',
     overflow: 'hidden',
   },
-  webview: {
-    flex: 1,
-    backgroundColor: '#EEF2F6',
-  },
-  overlay: { ...StyleSheet.absoluteFillObject },
+  overlay: { ...StyleSheet.absoluteFill },
   loadingPill: {
     alignSelf: 'center',
     marginTop: 6,

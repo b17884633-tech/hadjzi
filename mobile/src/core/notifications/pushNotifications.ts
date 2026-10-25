@@ -70,6 +70,9 @@ async function ensureAndroidChannel(
 /**
  * Ask OS permission, create Android channel, return Expo push token.
  * Returns null on simulator / denied / missing project id / Expo Go.
+ *
+ * Android closed-app delivery requires google-services.json in the binary
+ * and an FCM V1 key uploaded to EAS (eas credentials) — not Firebase Auth.
  */
 export async function getExpoPushToken(): Promise<string | null> {
   const Notifications = getNotifications();
@@ -101,10 +104,13 @@ export async function getExpoPushToken(): Promise<string | null> {
   try {
     const result = await Notifications.getExpoPushTokenAsync({ projectId: pid });
     cachedToken = result.data;
+    if (__DEV__) {
+      console.log('[push] Expo token ready', cachedToken?.slice(0, 28));
+    }
     return cachedToken;
   } catch (e) {
     console.warn(
-      '[push] getExpoPushTokenAsync failed',
+      '[push] getExpoPushTokenAsync failed — Android needs google-services.json + EAS FCM V1 credentials',
       e instanceof Error ? e.message : e,
     );
     return null;
