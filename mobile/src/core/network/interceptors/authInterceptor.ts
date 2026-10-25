@@ -21,8 +21,7 @@ export function attachAuthInterceptor(
       const isAuthRoute =
         url.includes('/auth/login') ||
         url.includes('/auth/register') ||
-        url.includes('/auth/otp') ||
-        url.includes('/auth/firebase');
+        url.includes('/auth/otp');
 
       // Stale / rotated JWT — drop local session so UI stops looking "logged in".
       if (status === 401 && !isAuthRoute) {

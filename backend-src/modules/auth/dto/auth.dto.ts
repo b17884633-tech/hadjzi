@@ -77,25 +77,3 @@ export class VerifyOtpDto {
   code: string;
 }
 
-/** Exchange a Firebase Phone Auth ID token for an app JWT. */
-export class FirebaseLoginDto {
-  @IsString()
-  @MinLength(20)
-  @MaxLength(4096)
-  idToken: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(50)
-  firstName?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(50)
-  lastName?: string;
-
-  @IsOptional()
-  @IsEmail()
-  @MaxLength(100)
-  email?: string;
-}

@@ -3,9 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { UsersService } from '../users/users.service';
 import { OtpService } from './otp.service';
-import { FirebaseAdminService } from './firebase-admin.service';
 import {
-  FirebaseLoginDto,
   LoginDto,
   RegisterDto,
   SendOtpDto,
@@ -14,7 +12,6 @@ import {
 import { AccountStatus, OtpChannel, OtpPurpose } from '../../common/enums';
 import { JwtPayload } from './jwt.strategy';
 import { User } from '../users/entities/user.entity';
-import { toE164 } from './messaging/phone.util';
 
 @Injectable()
 export class AuthService {
@@ -22,7 +19,6 @@ export class AuthService {
     private readonly users: UsersService,
     private readonly otp: OtpService,
     private readonly jwt: JwtService,
-    private readonly firebase: FirebaseAdminService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -117,40 +113,6 @@ export class AuthService {
         ? lastError
         : new UnauthorizedException('Invalid OTP');
     }
-    const verified = await this.users.markPhoneVerified(user.id);
-    return this.issueTokens(verified);
-  }
-
-  /**
-   * After the mobile app confirms the SMS code with Firebase Phone Auth,
-   * exchange the Firebase ID token for a Hadjzi JWT.
-   */
-  async loginWithFirebase(dto: FirebaseLoginDto) {
-    const { phone: firebasePhone } = await this.firebase.verifyIdToken(
-      dto.idToken,
-    );
-    const phone = toE164(firebasePhone);
-
-    let user = await this.users.findByPhone(phone);
-    if (!user) {
-      const first = dto.firstName?.trim();
-      const last = dto.lastName?.trim();
-      if (!first || !last) {
-        return { requiresRegister: true, phone };
-      }
-      user = await this.users.createCustomer({
-        firstName: first,
-        lastName: last,
-        phone,
-        email: dto.email,
-        password: `Hz${Math.random().toString(36).slice(2)}${Date.now()}!`,
-      });
-    }
-
-    if (user.status === AccountStatus.SUSPENDED) {
-      throw new UnauthorizedException('Account suspended');
-    }
-
     const verified = await this.users.markPhoneVerified(user.id);
     return this.issueTokens(verified);
   }

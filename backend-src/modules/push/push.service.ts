@@ -141,6 +141,8 @@ export class PushService {
       data: payload.data ?? {},
       channelId: 'default',
       priority: 'high' as const,
+      ttl: 60 * 60 * 24,
+      _contentAvailable: true,
     }));
 
     let sent = 0;
@@ -158,8 +160,18 @@ export class PushService {
           body: JSON.stringify(chunk),
         });
         const json = (await res.json()) as {
-          data?: Array<{ status?: string; details?: { error?: string } }>;
+          data?: Array<{
+            status?: string;
+            message?: string;
+            details?: { error?: string };
+          }>;
+          errors?: unknown;
         };
+        if (!res.ok) {
+          this.logger.warn(
+            `Expo push HTTP ${res.status}: ${JSON.stringify(json).slice(0, 400)}`,
+          );
+        }
         const results = Array.isArray(json?.data) ? json.data : [];
         for (let j = 0; j < results.length; j++) {
           const r = results[j];
@@ -167,8 +179,8 @@ export class PushService {
             sent += 1;
             continue;
           }
-          const err = r?.details?.error;
-          if (err === 'DeviceNotRegistered' || err === 'InvalidCredentials') {
+          const err = r?.details?.error ?? r?.message;
+          if (err === 'DeviceNotRegistered') {
             const bad = chunk[j]?.to;
             if (bad) {
               await this.tokens.delete({ token: bad });
@@ -183,6 +195,13 @@ export class PushService {
           `Expo push request failed: ${e instanceof Error ? e.message : e}`,
         );
       }
+    }
+    if (sent === 0 && tokens.length > 0) {
+      this.logger.warn(
+        `Expo push delivered 0/${tokens.length} — check device tokens / Expo project`,
+      );
+    } else {
+      this.logger.log(`Expo push delivered ${sent}/${tokens.length}`);
     }
     return { sent };
   }

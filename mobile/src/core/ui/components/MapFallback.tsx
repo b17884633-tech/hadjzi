@@ -13,7 +13,7 @@ export function MapFallback({
   latitude,
   longitude,
   label = 'فتح الموقع على الخريطة',
-  height = 180,
+  height = 240,
 }: Props) {
   const lat =
     latitude != null && Number.isFinite(latitude)

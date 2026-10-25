@@ -40,10 +40,3 @@ services:
         sync: false
       - key: INFOBIP_SMS_FROM
         value: ServiceSMS
-      # Firebase Admin (optional — only if using Firebase Phone Auth)
-      - key: FIREBASE_PROJECT_ID
-        sync: false
-      - key: FIREBASE_CLIENT_EMAIL
-        sync: false
-      - key: FIREBASE_PRIVATE_KEY
-        sync: false

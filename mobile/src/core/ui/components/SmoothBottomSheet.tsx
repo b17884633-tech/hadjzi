@@ -83,7 +83,11 @@ export function SmoothBottomSheet({
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
 
     const onShow = Keyboard.addListener(showEvent, (e) => {
-      const height = e.endCoordinates?.height ?? 0;
+      // Keyboard height often includes the system nav / home-indicator band that
+      // the sheet already reserves via paddingBottom — subtract it to avoid a
+      // blank gap above the keyboard when focusing an input.
+      const raw = e.endCoordinates?.height ?? 0;
+      const height = Math.max(0, raw - bottomPad);
       Animated.timing(keyboardOffset, {
         toValue: height,
         duration: Platform.OS === 'ios' ? e.duration ?? 250 : 220,
@@ -105,7 +109,7 @@ export function SmoothBottomSheet({
       onShow.remove();
       onHide.remove();
     };
-  }, [mounted, keyboardOffset]);
+  }, [mounted, keyboardOffset, bottomPad]);
 
   const slideY = progress.interpolate({
     inputRange: [0, 1],

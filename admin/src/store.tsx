@@ -241,7 +241,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           ...current,
           payments: replaceById(current.payments, next),
         }));
-        await refresh();
+        // Don't surface a dashboard refresh failure as a payment update failure.
+        try {
+          await refresh();
+        } catch {
+          /* list already updated above */
+        }
       },
       refundPayment: async (id) => {
         const next = await api.refundPayment(id);
@@ -249,7 +254,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           ...current,
           payments: [next, ...current.payments],
         }));
-        await refresh();
+        try {
+          await refresh();
+        } catch {
+          /* list already updated above */
+        }
       },
       pending: state.overview?.pending ?? {
         facilities: state.facilities.some((item) => item.status === 'PENDING_REVIEW'),

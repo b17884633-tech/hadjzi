@@ -200,7 +200,7 @@ export function FacilityDetailSections({
             <MapFallback
               latitude={mapCoords.latitude}
               longitude={mapCoords.longitude}
-              height={180}
+              height={240}
               label="فتح الموقع على الخريطة"
             />
           </View>

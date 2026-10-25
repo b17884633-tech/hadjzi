@@ -45,14 +45,9 @@ function assertProductionSecrets(): void {
     (process.env.TWILIO_ACCOUNT_SID &&
       process.env.TWILIO_AUTH_TOKEN &&
       process.env.TWILIO_SMS_FROM);
-  const hasFirebase =
-    process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
-    (process.env.FIREBASE_PROJECT_ID &&
-      process.env.FIREBASE_CLIENT_EMAIL &&
-      process.env.FIREBASE_PRIVATE_KEY);
-  if (!hasSms && !hasFirebase) {
+  if (!hasSms) {
     logger.error(
-      'No OTP delivery configured (Infobip/Twilio SMS or Firebase Phone Auth) — users will not be able to log in',
+      'No OTP delivery configured (Infobip/Twilio SMS) — users will not be able to log in',
     );
   }
   if (process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'true') {

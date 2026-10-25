@@ -498,10 +498,12 @@ export class BookingService {
     bookingId: string,
     to: BookingStatus,
   ) {
+    // Lock ONLY the booking row. Postgres rejects FOR UPDATE on the nullable
+    // side of a LEFT JOIN (e.g. availability), which was causing 500s when
+    // admin confirmed a payment.
     const booking = await manager
       .createQueryBuilder(Booking, 'b')
       .setLock('pessimistic_write')
-      .leftJoinAndSelect('b.availability', 'availability')
       .where('b.id = :id', { id: bookingId })
       .getOne();
     if (!booking) {
@@ -516,12 +518,24 @@ export class BookingService {
       );
     }
 
+    const from = booking.status;
+
     if (
       (to === BookingStatus.CANCELLED || to === BookingStatus.EXPIRED) &&
       booking.serviceId
     ) {
       await this.releaseStayNights(manager, booking);
       booking.temporaryLockUntil = null;
+    }
+
+    // Admin can revive an expired soft-hold after payment proof arrives —
+    // re-take the nights that expirePendingLocks already released.
+    if (
+      to === BookingStatus.CONFIRMED &&
+      from === BookingStatus.EXPIRED &&
+      booking.serviceId
+    ) {
+      await this.relockStayNightsForBooking(manager, booking);
     }
 
     if (to === BookingStatus.CONFIRMED || to === BookingStatus.REFUNDED) {
@@ -690,6 +704,86 @@ export class BookingService {
       }
     }
     return slots;
+  }
+
+  /**
+   * Re-decrement capacity when an expired booking is confirmed (admin revived
+   * a late payment). Mirrors lockStayNights using the booking's stored dates.
+   */
+  private async relockStayNightsForBooking(
+    manager: EntityManager,
+    booking: Booking,
+  ) {
+    if (!booking.serviceId) return;
+    const checkOut =
+      booking.checkOutDate ??
+      parseCheckOutFromNotes(booking.customerNotes) ??
+      null;
+    const nightDates = eachBlockedDate(booking.bookingDate, checkOut);
+    const quantity = booking.quantity ?? 1;
+
+    let checkInSlot: ServiceAvailability | null = null;
+    if (booking.availabilityId) {
+      checkInSlot = await manager
+        .createQueryBuilder(ServiceAvailability, 'slot')
+        .setLock('pessimistic_write')
+        .where('slot.id = :id', { id: booking.availabilityId })
+        .getOne();
+    }
+    if (!checkInSlot) {
+      checkInSlot = await manager
+        .createQueryBuilder(ServiceAvailability, 'slot')
+        .setLock('pessimistic_write')
+        .where('slot.service_id = :serviceId', { serviceId: booking.serviceId })
+        .andWhere('slot.date = :date', {
+          date: toDateKey(booking.bookingDate),
+        })
+        .andWhere(
+          booking.startTime
+            ? 'slot.start_time = :start'
+            : 'slot.start_time IS NULL',
+          booking.startTime ? { start: booking.startTime } : {},
+        )
+        .getOne();
+    }
+    if (!checkInSlot) {
+      throw new BadRequestException(
+        'لا يمكن تأكيد الحجز — لم يعد التوفر الأصلي موجوداً',
+      );
+    }
+
+    const providerId =
+      booking.providerId ??
+      (
+        await manager.findOne(ServiceItem, {
+          where: { id: booking.serviceId },
+          select: ['providerId'],
+        })
+      )?.providerId;
+    if (!providerId) {
+      throw new BadRequestException(
+        'لا يمكن تأكيد الحجز — المنشأة غير موجودة',
+      );
+    }
+
+    const slots = await this.lockStayNights(
+      manager,
+      booking.serviceId,
+      providerId,
+      nightDates,
+      quantity,
+      checkInSlot,
+    );
+
+    // lockStayNights validates capacity but does not mutate — apply decrement here.
+    for (const slot of slots) {
+      slot.availableCapacity -= quantity;
+      if (slot.availableCapacity <= 0) {
+        slot.availableCapacity = 0;
+        slot.status = AvailabilityStatus.SOLD_OUT;
+      }
+      await manager.save(slot);
+    }
   }
 
   private async releaseStayNights(

@@ -6,7 +6,6 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { OtpService } from './otp.service';
-import { FirebaseAdminService } from './firebase-admin.service';
 import { JwtStrategy } from './jwt.strategy';
 import { OtpCode } from './entities/otp-code.entity';
 import { UsersModule } from '../users/users.module';
@@ -70,7 +69,6 @@ function hasMetaWhatsapp(config: ConfigService): boolean {
   providers: [
     AuthService,
     OtpService,
-    FirebaseAdminService,
     JwtStrategy,
     ConsoleSmsAdapter,
     ConsoleWhatsappAdapter,

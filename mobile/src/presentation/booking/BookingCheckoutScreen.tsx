@@ -21,7 +21,7 @@ import { useApp } from '../../di/AppProvider';
 import { RootStackParamList } from '../navigation/types';
 import { DEPOSIT_PERCENTAGE } from '../../core/common/bookingConstants';
 import { CurrencyCode } from '../../core/common/currency';
-import { formatArabicDate } from './bookingFlow';
+import { formatArabicDate, resolveBookingFlow } from './bookingFlow';
 import { PaymentTransferSheet } from './components/PaymentTransferSheet';
 import { CurrencyPickerSheet } from '../account/CurrencyPickerSheet';
 import { notifyBookingCreated } from '../../data/local/notificationStorage';
@@ -52,7 +52,15 @@ export function BookingCheckoutScreen() {
     params.membershipDuration != null &&
     params.membershipDuration >= 1;
 
+  const showAttendance = useMemo(
+    () =>
+      resolveBookingFlow(params.categoryName, params.bookingType).needsGuestStep &&
+      Boolean(params.attendanceType),
+    [params.categoryName, params.bookingType, params.attendanceType],
+  );
+
   const guestLine = useMemo(() => {
+    if (!showAttendance) return null;
     const adults = params.adults ?? 0;
     const children = params.children ?? 0;
     if (!adults && !children) return null;
@@ -60,7 +68,7 @@ export function BookingCheckoutScreen() {
     if (adults > 0) parts.push(`${adults} كبار`);
     if (children > 0) parts.push(`${children} أطفال`);
     return parts.join(' · ');
-  }, [params.adults, params.children]);
+  }, [showAttendance, params.adults, params.children]);
 
   const createBooking = async (
     transferRef: string,
@@ -77,7 +85,9 @@ export function BookingCheckoutScreen() {
       params.membershipDuration >= 1;
 
     const notesBase = [
-      params.attendanceType ? `نوع الحضور: ${params.attendanceType}` : null,
+      showAttendance && params.attendanceType
+        ? `نوع الحضور: ${params.attendanceType}`
+        : null,
       guestLine ? `عدد الأشخاص: ${guestLine}` : null,
       isMembership && params.checkOutDate
         ? `نهاية الاشتراك: ${params.checkOutDate}`
@@ -281,7 +291,7 @@ export function BookingCheckoutScreen() {
           ) : null}
         </View>
 
-        {params.attendanceType ? (
+        {showAttendance && params.attendanceType ? (
           <>
             <Text style={styles.sectionLabel}>بيانات الحضور</Text>
             <View style={styles.card}>

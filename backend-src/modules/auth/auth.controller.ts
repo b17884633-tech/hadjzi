@@ -2,7 +2,6 @@ import { Body, Controller, Post } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import {
-  FirebaseLoginDto,
   LoginDto,
   RegisterDto,
   SendOtpDto,
@@ -36,11 +35,5 @@ export class AuthController {
   @Post('otp/verify')
   verifyOtp(@Body() dto: VerifyOtpDto) {
     return this.auth.verifyOtp(dto);
-  }
-
-  @Throttle({ default: { limit: 8, ttl: 60_000 } })
-  @Post('firebase')
-  firebaseLogin(@Body() dto: FirebaseLoginDto) {
-    return this.auth.loginWithFirebase(dto);
   }
 }

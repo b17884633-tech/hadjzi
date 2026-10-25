@@ -1,5 +1,6 @@
 import {
   IsEnum,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -84,7 +85,12 @@ export class AdminSetProviderStatusDto {
 }
 
 export class AdminSetPaymentStatusDto {
-  @IsEnum([PaymentStatus.SUCCESS, PaymentStatus.FAILED, PaymentStatus.INITIATED])
+  /** Use IsIn — @IsEnum([...array]) is a class-validator footgun. */
+  @IsIn([
+    PaymentStatus.SUCCESS,
+    PaymentStatus.FAILED,
+    PaymentStatus.INITIATED,
+  ])
   status: PaymentStatus;
 }
 

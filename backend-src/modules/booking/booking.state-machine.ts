@@ -13,7 +13,8 @@ const TRANSITIONS: Record<BookingStatus, BookingStatus[]> = {
   ],
   [BookingStatus.CANCELLED]: [],
   [BookingStatus.COMPLETED]: [],
-  [BookingStatus.EXPIRED]: [],
+  // Admin may confirm payment after the soft-hold expired (late transfer proof).
+  [BookingStatus.EXPIRED]: [BookingStatus.CONFIRMED],
   [BookingStatus.REFUNDED]: [],
 };
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
+  ScrollView,
   Share,
   StyleSheet,
   TextInput,
@@ -10,8 +11,6 @@ import {
 import { AppText as Text } from '@/core/ui/components/AppText';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { KeyboardAwareScrollView } from '../../../core/ui/components/KeyboardAwareScrollView';
 import { SmoothBottomSheet } from '../../../core/ui/components/SmoothBottomSheet';
 import { theme } from '../../../core/ui/theme';
 import { useApp } from '../../../di/AppProvider';
@@ -37,7 +36,6 @@ export function PaymentTransferSheet({
   onConfirm,
 }: Props) {
   const { formatPrice, container } = useApp();
-  const insets = useSafeAreaInsets();
   const [payMode, setPayMode] = useState<'FULL' | 'DEPOSIT'>('DEPOSIT');
   const [refNo, setRefNo] = useState('');
   const [loading, setLoading] = useState(false);
@@ -75,16 +73,19 @@ export function PaymentTransferSheet({
     <SmoothBottomSheet
       visible={visible}
       onClose={onClose}
-      sheetStyle={[styles.sheet, { paddingBottom: Math.max(insets.bottom, 20) }]}
+      sheetStyle={styles.sheet}
     >
           <Text style={styles.title}>محفظة جيب ( تحويل مشترك )</Text>
           <Text style={styles.subtitle}>أدخل بيانات الدفع لإتمام العملية</Text>
 
-          <KeyboardAwareScrollView
+          {/* Plain ScrollView — SmoothBottomSheet already lifts above the keyboard.
+              KeyboardAwareScrollView padding would double the gap. */}
+          <ScrollView
             bounces={false}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scroll}
-            avoidKeyboard={false}
-            bottomOffset={32}
           >
             <Text style={styles.section}>خيارات الدفع</Text>
             <View style={styles.payRow}>
@@ -137,7 +138,7 @@ export function PaymentTransferSheet({
               onChangeText={setRefNo}
               textAlign="right"
             />
-          </KeyboardAwareScrollView>
+          </ScrollView>
 
           <Pressable
             disabled={loading || !refNo.trim()}

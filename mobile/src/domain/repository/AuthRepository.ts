@@ -33,13 +33,6 @@ export interface AuthRepository {
     channel?: 'SMS' | 'WHATSAPP';
   }): Promise<User>;
   verifyOtp(phone: string, code: string): Promise<AuthTokens>;
-  /** Exchange a Firebase Phone Auth ID token for app JWT. */
-  loginWithFirebase(input: {
-    idToken: string;
-    firstName?: string;
-    lastName?: string;
-    email?: string;
-  }): Promise<AuthTokens | RequiresRegisterResult>;
   logout(): Promise<void>;
   getCurrentUser(): Promise<User | null>;
   isAuthenticated(): Promise<boolean>;

@@ -22,13 +22,6 @@ export interface VerifyOtpRequest {
   code: string;
 }
 
-export interface FirebaseLoginRequest {
-  idToken: string;
-  firstName?: string;
-  lastName?: string;
-  email?: string;
-}
-
 export class AuthApi {
   constructor(private readonly client: AxiosInstance) {}
 
@@ -47,12 +40,6 @@ export class AuthApi {
 
   verifyOtp(dto: VerifyOtpRequest) {
     return this.client.post<ApiSuccessResponse<AuthTokens>>('/auth/otp/verify', dto);
-  }
-
-  firebaseLogin(dto: FirebaseLoginRequest) {
-    return this.client.post<
-      ApiSuccessResponse<AuthTokens | { requiresRegister: true; phone: string }>
-    >('/auth/firebase', dto);
   }
 
   sendOtp(phone: string, channel: 'SMS' | 'WHATSAPP' = 'SMS') {

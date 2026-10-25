@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppNotification } from '../../domain/model/Notification';
 import { Booking } from '../../domain/model/Booking';
 import type { NotificationApi } from '../remote/notificationApi';
+import { presentOsNotification } from '../../core/notifications/pushNotifications';
 
 const NOTIFICATIONS_KEY = 'hadjzi.notifications';
 const BOOKING_STATUS_KEY = 'hadjzi.booking_status_snapshot';
@@ -87,6 +88,18 @@ export async function addNotification(
   };
   await saveAll([next, ...list]);
   emitNotificationsChanged();
+  if (!next.read) {
+    void presentOsNotification({
+      id: next.id,
+      title: next.title,
+      body: next.body,
+      data: {
+        notificationId: next.id,
+        kind: next.kind,
+        ...(next.bookingId ? { bookingId: next.bookingId } : {}),
+      },
+    });
+  }
   return next;
 }
 
@@ -228,22 +241,29 @@ export async function syncRemoteNotifications(
 
       const local = await listNotifications();
       const before = notificationsFingerprint(local);
+      const knownIds = new Set(local.map((item) => item.id));
       const byId = new Map(local.map((item) => [item.id, item]));
+      const newlyArrived: AppNotification[] = [];
 
       for (const item of rows) {
         const existing = byId.get(item.id);
-        byId.set(item.id, {
+        const createdAt =
+          typeof item.createdAt === 'string'
+            ? item.createdAt
+            : new Date(item.createdAt).toISOString();
+        const next: AppNotification = {
           id: item.id,
           title: item.title,
           body: item.body,
           kind: mapRemoteKind(item.kind),
           providerId: item.providerId ?? undefined,
-          createdAt:
-            typeof item.createdAt === 'string'
-              ? item.createdAt
-              : new Date(item.createdAt).toISOString(),
+          createdAt,
           read: existing?.read || item.read,
-        });
+        };
+        byId.set(item.id, next);
+        if (!knownIds.has(item.id) && !next.read) {
+          newlyArrived.push(next);
+        }
       }
 
       const merged = [...byId.values()].sort((a, b) =>
@@ -253,6 +273,18 @@ export async function syncRemoteNotifications(
 
       await saveAll(merged);
       emitNotificationsChanged();
+      for (const n of newlyArrived) {
+        void presentOsNotification({
+          id: n.id,
+          title: n.title,
+          body: n.body,
+          data: {
+            notificationId: n.id,
+            kind: n.kind,
+            type: 'app_notification',
+          },
+        });
+      }
     } catch {
       // Allow a quicker retry after a failed poll.
       lastRemoteSyncAt = 0;

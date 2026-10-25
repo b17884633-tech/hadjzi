@@ -565,9 +565,9 @@ export function BookingDateScreen() {
         ? params.packageToTime ?? selectedAvailability.endTime
         : lastSlot?.endTime ?? selectedAvailability.endTime,
       quantity: multi ? 1 : checkoutQty,
-      attendanceType,
-      adults,
-      children: childrenCount,
+      attendanceType: flow.needsGuestStep ? attendanceType : undefined,
+      adults: flow.needsGuestStep ? adults : undefined,
+      children: flow.needsGuestStep ? childrenCount : undefined,
       price: navPrice,
       depositPercentage: depositPct,
       checkOutDate: isMembership

@@ -485,13 +485,18 @@ export class AdminService {
       payment.bookingId &&
       payment.paymentType !== PaymentType.REFUND
     ) {
+      // Confirm (or revive EXPIRED → CONFIRMED). Already-confirmed is a no-op.
       await this.bookingService.transition(
         payment.bookingId,
         BookingStatus.CONFIRMED,
       );
     }
 
-    return this.mapPayment(payment);
+    const refreshed = await this.payments.findOne({
+      where: { id: payment.id },
+      relations: ['customer', 'booking', 'booking.provider'],
+    });
+    return this.mapPayment(refreshed ?? payment);
   }
 
   async refundPayment(id: string) {

@@ -1,19 +1,43 @@
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
-import * as Notifications from 'expo-notifications';
 import type { AxiosInstance } from 'axios';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
+/**
+ * Lazy-load expo-notifications so a missing native module (Expo Go / stale
+ * binary) does not crash the whole app at import time.
+ */
+type NotificationsModule = typeof import('expo-notifications');
+
+let notifications: NotificationsModule | null | undefined;
+
+function getNotifications(): NotificationsModule | null {
+  if (notifications !== undefined) return notifications;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require('expo-notifications') as NotificationsModule;
+    mod.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowBanner: true,
+        shouldShowList: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+      }),
+    });
+    notifications = mod;
+    return mod;
+  } catch (e) {
+    console.warn(
+      '[push] expo-notifications native module unavailable — use a development build, not Expo Go',
+      e instanceof Error ? e.message : e,
+    );
+    notifications = null;
+    return null;
+  }
+}
 
 let cachedToken: string | null = null;
+let androidChannelReady = false;
 
 function projectId(): string | undefined {
   const extra = Constants.expoConfig?.extra as
@@ -26,23 +50,36 @@ function projectId(): string | undefined {
   );
 }
 
+async function ensureAndroidChannel(
+  Notifications: NotificationsModule,
+): Promise<void> {
+  if (Platform.OS !== 'android' || androidChannelReady) return;
+  await Notifications.setNotificationChannelAsync('default', {
+    name: 'حجزي',
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: '#0D1B3E',
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    bypassDnd: false,
+    enableVibrate: true,
+    showBadge: true,
+  });
+  androidChannelReady = true;
+}
+
 /**
  * Ask OS permission, create Android channel, return Expo push token.
- * Returns null on simulator / denied / missing project id.
+ * Returns null on simulator / denied / missing project id / Expo Go.
  */
 export async function getExpoPushToken(): Promise<string | null> {
+  const Notifications = getNotifications();
+  if (!Notifications) return null;
+
   if (!Device.isDevice) {
     return null;
   }
 
-  if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('default', {
-      name: 'حجزي',
-      importance: Notifications.AndroidImportance.HIGH,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#0D1B3E',
-    });
-  }
+  await ensureAndroidChannel(Notifications);
 
   const current = await Notifications.getPermissionsAsync();
   let status = current.status;
@@ -51,6 +88,7 @@ export async function getExpoPushToken(): Promise<string | null> {
     status = asked.status;
   }
   if (status !== 'granted') {
+    console.warn('[push] notification permission not granted');
     return null;
   }
 
@@ -70,6 +108,45 @@ export async function getExpoPushToken(): Promise<string | null> {
       e instanceof Error ? e.message : e,
     );
     return null;
+  }
+}
+
+/**
+ * Show a system tray / notification-center entry (works without remote push).
+ * Dedupes by identifier so sync + remote push do not double-fire.
+ */
+export async function presentOsNotification(input: {
+  id: string;
+  title: string;
+  body: string;
+  data?: Record<string, string>;
+}): Promise<void> {
+  const Notifications = getNotifications();
+  if (!Notifications) return;
+
+  try {
+    await ensureAndroidChannel(Notifications);
+    const current = await Notifications.getPermissionsAsync();
+    if (current.status !== 'granted') return;
+
+    await Notifications.scheduleNotificationAsync({
+      identifier: `hadjzi_${input.id}`,
+      content: {
+        title: input.title,
+        body: input.body,
+        sound: true,
+        data: input.data ?? { notificationId: input.id },
+        ...(Platform.OS === 'android'
+          ? { priority: Notifications.AndroidNotificationPriority.HIGH }
+          : {}),
+      },
+      trigger: null,
+    });
+  } catch (e) {
+    console.warn(
+      '[push] presentOsNotification failed',
+      e instanceof Error ? e.message : e,
+    );
   }
 }
 

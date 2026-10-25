@@ -260,18 +260,35 @@ export function CategoryScreen({ route, navigation }: Props) {
     );
   }, [filtered, isCatalog, query, filters.brands]);
 
-  const featured = useMemo(() => filtered.slice(0, 8), [filtered]);
-  const topRated = useMemo(
+  const [showAllOffers, setShowAllOffers] = useState(false);
+  const [showAllTopRated, setShowAllTopRated] = useState(false);
+
+  // New category / filters → collapse back to preview
+  useEffect(() => {
+    setShowAllOffers(false);
+    setShowAllTopRated(false);
+  }, [categoryId, filters, query]);
+
+  const PREVIEW_OFFERS = 8;
+  const PREVIEW_TOP = 6;
+
+  const featured = useMemo(
+    () => (showAllOffers ? filtered : filtered.slice(0, PREVIEW_OFFERS)),
+    [filtered, showAllOffers],
+  );
+  const topRatedAll = useMemo(
     () =>
-      [...filtered]
-        .sort((a, b) => {
-          const ra = a.reviewCount && a.reviewCount > 0 ? (a.rating ?? 0) : 0;
-          const rb = b.reviewCount && b.reviewCount > 0 ? (b.rating ?? 0) : 0;
-          if (rb !== ra) return rb - ra;
-          return (b.reviewCount ?? 0) - (a.reviewCount ?? 0);
-        })
-        .slice(0, 6),
+      [...filtered].sort((a, b) => {
+        const ra = a.reviewCount && a.reviewCount > 0 ? (a.rating ?? 0) : 0;
+        const rb = b.reviewCount && b.reviewCount > 0 ? (b.rating ?? 0) : 0;
+        if (rb !== ra) return rb - ra;
+        return (b.reviewCount ?? 0) - (a.reviewCount ?? 0);
+      }),
     [filtered],
+  );
+  const topRated = useMemo(
+    () => (showAllTopRated ? topRatedAll : topRatedAll.slice(0, PREVIEW_TOP)),
+    [topRatedAll, showAllTopRated],
   );
 
   const activeCount = countActiveFilters(filters);
@@ -322,10 +339,8 @@ export function CategoryScreen({ route, navigation }: Props) {
       ? 'المركبات'
       : 'السيارات';
 
-  const openSearch = () =>
-    navigation.navigate('SearchResults', {
-      filters: { categoryId, cityId: filters.cityId },
-    });
+  /** Expand the offers list on this page (no separate SearchResults screen). */
+  const showAllOnPage = () => setShowAllOffers(true);
 
   const openPromoSlide = (slide: PromoSlide) => {
     handlePromoSlidePress(slide, {
@@ -336,12 +351,12 @@ export function CategoryScreen({ route, navigation }: Props) {
         try {
           const service = await container.serviceApi.getService(serviceId);
           if (service.providerId) openProvider(service.providerId);
-          else openSearch();
+          else showAllOnPage();
         } catch {
-          openSearch();
+          showAllOnPage();
         }
       },
-      fallback: openSearch,
+      fallback: showAllOnPage,
     });
   };
 
@@ -454,7 +469,7 @@ export function CategoryScreen({ route, navigation }: Props) {
           categoryId={categoryId}
           categoryName={category?.name ?? titleParam}
           onPressSlide={openPromoSlide}
-          onExplore={openSearch}
+          onExplore={showAllOnPage}
         />
 
         {subcategories.length > 0 ? (
@@ -470,8 +485,12 @@ export function CategoryScreen({ route, navigation }: Props) {
         <View style={styles.section}>
           <SectionHeading
             title={isCatalog ? catalogSectionTitle : 'عروض في هذا التصنيف'}
-            action="عرض الكل"
-            onPress={openSearch}
+            action={
+              isCatalog || showAllOffers || filtered.length <= PREVIEW_OFFERS
+                ? undefined
+                : 'عرض الكل'
+            }
+            onPress={showAllOnPage}
             count={isCatalog ? catalogProducts.length : filtered.length}
           />
           {loading ? (
@@ -544,8 +563,12 @@ export function CategoryScreen({ route, navigation }: Props) {
           <View style={styles.section}>
             <SectionHeading
               title="الأعلى تقييماً"
-              action="عرض الكل"
-              onPress={openSearch}
+              action={
+                showAllTopRated || topRatedAll.length <= PREVIEW_TOP
+                  ? undefined
+                  : 'عرض الكل'
+              }
+              onPress={() => setShowAllTopRated(true)}
             />
             {topRated.map((provider) => {
               const service = cheapestService(provider);
@@ -598,8 +621,8 @@ function SectionHeading({
   count,
 }: {
   title: string;
-  action: string;
-  onPress: () => void;
+  action?: string;
+  onPress?: () => void;
   count?: number;
 }) {
   return (
@@ -611,10 +634,12 @@ function SectionHeading({
           {count != null ? ` (${count})` : ''}
         </Text>
       </View>
-      <Pressable style={styles.viewAll} onPress={onPress}>
-        <Text style={styles.viewAllText}>{action}</Text>
-        <Ionicons name="chevron-back" size={14} color={theme.colors.accentDark} />
-      </Pressable>
+      {action && onPress ? (
+        <Pressable style={styles.viewAll} onPress={onPress}>
+          <Text style={styles.viewAllText}>{action}</Text>
+          <Ionicons name="chevron-back" size={14} color={theme.colors.accentDark} />
+        </Pressable>
+      ) : null}
     </View>
   );
 }

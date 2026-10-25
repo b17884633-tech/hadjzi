@@ -741,7 +741,7 @@ export function ProviderProfileScreen() {
                 <MapFallback
                   latitude={mapCoords.latitude}
                   longitude={mapCoords.longitude}
-                  height={180}
+                  height={240}
                   label="فتح الموقع على الخريطة"
                 />
               </View>
@@ -1326,7 +1326,6 @@ const styles = StyleSheet.create({
   },
   outlinePillText: { fontSize: 13, fontWeight: '600', color: DETAIL.muted },
   mapCard: {
-    height: 168,
     borderRadius: 16,
     overflow: 'hidden',
     backgroundColor: '#E8EEF8',
