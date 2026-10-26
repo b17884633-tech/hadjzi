@@ -1,9 +1,6 @@
 /**
- * Free light street basemap (PNG).
- *
- * CartoCDN returns "API KEY REQUIRED" watermarks without a key.
- * Esri World_Street_Map is JPEG — Android UrlTile often fails to paint it
- * (blank grey map). OSM France serves PNG tiles with no API key.
+ * Optional OSM PNG tile fallback (dense / labeled — prefer native Google Maps).
+ * Kept for OsmLocationMap and any explicit streetTiles=true call sites.
  */
 export function osmTileUrl(zoom: number, x: number, y: number): string {
   const n = 2 ** zoom;

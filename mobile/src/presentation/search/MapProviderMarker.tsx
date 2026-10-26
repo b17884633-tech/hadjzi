@@ -1,28 +1,33 @@
 import { StyleSheet, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-/** Teal pin matching the reference search-map look. */
-export const MAP_PIN_TEAL = '#26C6DA';
-export const MAP_PIN_TEAL_DARK = '#00ACC1';
+/** Brand navy pins for facilities on the search / detail maps. */
+export const MAP_PIN_NAVY = '#0D1B3E';
+export const MAP_PIN_NAVY_DARK = '#061028';
 export const MAP_PIN_COPPER = '#A8844F';
+
+/** @deprecated Use MAP_PIN_NAVY */
+export const MAP_PIN_TEAL = MAP_PIN_NAVY;
+/** @deprecated Use MAP_PIN_NAVY_DARK */
+export const MAP_PIN_TEAL_DARK = MAP_PIN_NAVY_DARK;
 
 type Props = {
   selected?: boolean;
   /** Accent variant (e.g. selected / featured). */
-  variant?: 'teal' | 'copper';
+  variant?: 'navy' | 'copper' | 'teal';
 };
 
-/** Teardrop pin with home glyph — matches the search map design. */
+/** Teardrop pin with home glyph — navy by default. */
 export function MapProviderMarker({
   selected = false,
-  variant = 'teal',
+  variant = 'navy',
 }: Props) {
   const fill =
     variant === 'copper'
       ? MAP_PIN_COPPER
       : selected
-        ? MAP_PIN_TEAL_DARK
-        : MAP_PIN_TEAL;
+        ? MAP_PIN_NAVY_DARK
+        : MAP_PIN_NAVY;
 
   return (
     <View style={styles.wrap}>

@@ -1,4 +1,4 @@
-import { useMemo, useRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   StyleSheet,
@@ -30,8 +30,8 @@ type PinPayload = {
 const DEFAULT_DELTA = 0.08;
 
 /**
- * Search map — same react-native-maps + street tiles stack as facility details
- * (WebView/Leaflet left a blank surface when layout fill styles broke).
+ * Search map — native Google Maps basemap (clean). Do not overlay OSM tiles;
+ * those paint the dense “ugly” style after facilities finish loading.
  */
 export function SearchMapView({
   cityName,
@@ -94,15 +94,25 @@ export function SearchMapView({
     };
   }, [pins, cityCenter]);
 
+  useEffect(() => {
+    if (!pins.length) return;
+    mapRef.current?.animateToRegion(initialRegion, 350);
+  }, [cityName, pins.length, initialRegion]);
+
   return (
     <View style={styles.root}>
       <View style={styles.mapHost} collapsable={false}>
         <RtlSafeMapView
-          key={`${cityName}-${pins.length}`}
+          key={cityName}
           ref={mapRef}
-          streetTiles
+          streetTiles={false}
           style={StyleSheet.absoluteFill}
-          initialRegion={initialRegion}
+          initialRegion={{
+            latitude: cityCenter.latitude,
+            longitude: cityCenter.longitude,
+            latitudeDelta: DEFAULT_DELTA,
+            longitudeDelta: DEFAULT_DELTA,
+          }}
           showsCompass={false}
           showsUserLocation={false}
           rotateEnabled={false}

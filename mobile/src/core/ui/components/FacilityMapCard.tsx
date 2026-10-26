@@ -8,11 +8,10 @@ import {
 import { AppText as Text } from '@/core/ui/components/AppText';
 import MapView, { Marker } from 'react-native-maps';
 import { openStreetMapUrl } from '../../maps/yemen';
+import { MapProviderMarker } from '../../../presentation/search/MapProviderMarker';
 import { theme } from '../theme';
 import { RtlSafeMapView } from './RtlSafeMapView';
 
-/** Classic Google-red pin for facility detail maps. */
-const PIN_RED = '#EA4335';
 const DEFAULT_DELTA = 0.012;
 const MIN_DELTA = 0.002;
 const MAX_DELTA = 0.08;
@@ -75,14 +74,13 @@ export function FacilityMapCard({
         <RtlSafeMapView
           ref={mapRef}
           preview
-          streetTiles
+          streetTiles={false}
           style={StyleSheet.absoluteFill}
           scrollEnabled={false}
           zoomEnabled={false}
           rotateEnabled={false}
           pitchEnabled={false}
           pointerEvents="none"
-          showsZoomControls={false}
           showsCompass={false}
           initialRegion={{
             latitude,
@@ -91,7 +89,12 @@ export function FacilityMapCard({
             longitudeDelta: DEFAULT_DELTA,
           }}
         >
-          <Marker coordinate={{ latitude, longitude }} pinColor={PIN_RED} />
+          <Marker
+            coordinate={{ latitude, longitude }}
+            tracksViewChanges={false}
+          >
+            <MapProviderMarker />
+          </Marker>
         </RtlSafeMapView>
       </Pressable>
 
